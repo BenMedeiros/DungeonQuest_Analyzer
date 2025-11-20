@@ -1,0 +1,13 @@
+{
+  "name": "dungeonquest-analyzer",
+  "version": "1.0.0",
+  "description": "DungeonQuest game board state analyzer",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
