@@ -7,13 +7,13 @@ if (fs.existsSync('./logs')) {
 }
 
 // Global settings
-const NUM_OF_PATHS = 3;
+const NUM_OF_PATHS = 2;
 const STARTING_DEPTH = 2;
-const MAX_ROUNDS = 3;
+const MAX_ROUNDS = 2;
 
 const playerEnum = Object.freeze({
-    OFFENSE: 'OFFENSE',
-    DEFENSE: 'DEFENSE'
+    OFFENSE: 'O',
+    DEFENSE: 'D'
 });
 
 const tileBagEnum = Object.freeze({
@@ -152,7 +152,7 @@ function calcTileLocationPermutations(combination, numLocations) {
     }
 
     const permutations = generatePermutations(tiles);
-    
+
     // Convert permutations to objects with placement string and nextRound
     return permutations.map(placement => ({
         placement: placement.join(''),  // Concat to string without separator
@@ -172,61 +172,120 @@ function combinationToString(combination) {
     return tileTypes.map(type => combination[type] || 0).join('-');
 }
 
+// Helper function to generate all possible action combinations given available gold
+function generateOffenseActions(gold) {
+    const SPAWN_COST = 4;
+    const MOVE_COST = 2;
+    const actionCombinations = [];
+
+    // Generate all possible combinations of spending 0 to all available gold
+    for (let goldToSpend = 0; goldToSpend <= gold; goldToSpend++) {
+        // For a given amount to spend, try all combinations of spawns and moves
+        const maxSpawns = Math.floor(goldToSpend / SPAWN_COST);
+        
+        for (let spawns = 0; spawns <= maxSpawns; spawns++) {
+            const remainingAfterSpawns = goldToSpend - (spawns * SPAWN_COST);
+            const moves = Math.floor(remainingAfterSpawns / MOVE_COST);
+            
+            // Only include if we actually spend exactly goldToSpend
+            const actualSpend = (spawns * SPAWN_COST) + (moves * MOVE_COST);
+            if (actualSpend !== goldToSpend) continue;
+            
+            // Build action array
+            const actions = [];
+            for (let i = 0; i < spawns; i++) actions.push('spawn');
+            for (let i = 0; i < moves; i++) actions.push('move');
+            
+            const finalGold = gold - goldToSpend;
+            
+            actionCombinations.push({
+                actions,
+                finalGold
+            });
+        }
+    }
+
+    return actionCombinations;
+}
+
 // Recursive function to build game tree
-function buildGameTree(tileBag, round) {
+function buildGameTree(tileBag, round, offenseGold = 4) {
     if (round > MAX_ROUNDS) {
         return null;
     }
 
     console.log(`\nProcessing round ${round}...`);
-    
+
     // First round draws NUM_OF_PATHS * STARTING_DEPTH, subsequent rounds draw NUM_OF_PATHS
     const numTilesToDraw = round === 1 ? NUM_OF_PATHS * STARTING_DEPTH : NUM_OF_PATHS;
-    
+
     const drawCombinations = drawTilesFromBagProbabilityDistribution(tileBag, numTilesToDraw);
-    
+
     const potentialDraws = drawCombinations.map(({ combination, probability }, index) => {
         console.log(`  Round ${round} - Combination ${index + 1}/${drawCombinations.length}:`, combination, `(probability: ${probability})`);
-        
+
         const placementPermutations = calcTileLocationPermutations(combination, numTilesToDraw);
         console.log(`    Found ${placementPermutations.length} unique arrangements`);
-        
+
         // Calculate remaining tiles in bag after this draw
         const remainingTileBag = { ...tileBag };
         for (const [tileType, count] of Object.entries(combination)) {
             remainingTileBag[tileType] -= count;
         }
-        
+
+        // Generate all possible offense actions for this round
+        const offenseActions = generateOffenseActions(offenseGold);
+
         // Recursively build next round for each placement
         placementPermutations.forEach(permutation => {
-            permutation.nextRound = buildGameTree(remainingTileBag, round + 1);
+            // After defense placement, create offense round with all possible actions
+            const turnActions = offenseActions.map(action => ({
+                actions: action.actions,
+                finalGold: action.finalGold,
+                nextRound: buildGameTree(remainingTileBag, round + 1, action.finalGold + 1)
+            }));
+
+            permutation.nextRound = {
+                round,
+                turn: playerEnum.OFFENSE,
+                gold: offenseGold,
+                turnActions
+            };
         });
-        
+
         return {
-            combination: combinationToString(combination),
+            drawCombination: combinationToString(combination),
             drawProbability: probability,
             randomPlacementProbability: 1 / placementPermutations.length,
             placementPermutations
         };
     });
-    
+
     return {
         round,
+        turn: playerEnum.DEFENSE,
         tileBag: tileBagToString(tileBag),
         potentialDraws
     };
 }
+
+function printGameAnalysis(gameAnalysis, indent = '') {
+    if (!gameAnalysis) return;
+
+    // Save gameAnalysis to file
+    if (!fs.existsSync('./logs')) {
+        fs.mkdirSync('./logs', { recursive: true });
+    }
+    const filename = `./logs/game_analysis.json`;
+    fs.writeFileSync(filename, JSON.stringify(gameAnalysis, null, 2), 'utf8');
+    console.log(`\nGame analysis saved to ${filename}`);
+}
+
+
 
 console.log('DungeonQuest Analyzer');
 console.log(`Paths: ${NUM_OF_PATHS}, Starting Depth: ${STARTING_DEPTH}, Max Rounds: ${MAX_ROUNDS}`);
 
 const gameAnalysis = buildGameTree(initialTileBag, 1);
 
-// Save gameAnalysis to file
-if (!fs.existsSync('./logs')) {
-    fs.mkdirSync('./logs', { recursive: true });
-}
-const filename = `./logs/game_analysis.json`;
-fs.writeFileSync(filename, JSON.stringify(gameAnalysis, null, 2), 'utf8');
-console.log(`\nGame analysis saved to ${filename}`);
-
+printGameAnalysis(gameAnalysis);
