@@ -25,12 +25,15 @@ const gameBoard = newGameBoard(settings);
 const numTilesToDraw = gameBoard.paths.length * settings.startingDepth;
 const initialDefenseMoves = drawTilesFromBagProbabilityDistribution(gameBoard, numTilesToDraw);
 
+
+let singleDefenseMove = null;
+
 // Calculate arrangements for each combination
 initialDefenseMoves.forEach(({ combination, probability }, index) => {
     console.log(`\nProcessing combination:`, combination, `(probability: ${probability})`);
     const permutations = calcTileLocationPermutations(combination, numTilesToDraw);
     console.log(`  Found ${permutations.length} unique arrangements`);
-    
+
     // Log the complete combination object with its placement permutations
     const combinationObj = {
         combination,
@@ -39,5 +42,23 @@ initialDefenseMoves.forEach(({ combination, probability }, index) => {
         placementPermutations: permutations
     };
     logCombination(gameBoard.round, combinationObj, index);
+
+    if (singleDefenseMove === null) {
+        singleDefenseMove = {
+            round: gameBoard.round,
+            drawTiles: {
+                combination,
+                drawProbability: probability
+            },
+            tilePlacement: {
+                randomPlacementProbability: 1 / permutations.length,
+                locationTileSet: permutations[3]
+            }
+        }
+    }
 });
+
+
+gameBoard.round += 1;
+console.log('singleDefenseMove', singleDefenseMove);
 
