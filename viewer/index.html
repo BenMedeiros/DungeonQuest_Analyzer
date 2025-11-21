@@ -20,12 +20,19 @@
         <div class="quick-buttons">
             <!-- Placeholder for quick buttons -->
             <button class="quick-btn" onclick="collapseAll()">Collapse All</button>
-            <button class="quick-btn" onclick="expandLevel(1)">Expand Level 1</button>
+            <button class="quick-btn" onclick="expandLevel(1)">Expand Lvl 1</button>
+            <button class="quick-btn" onclick="expandLevel(2)">Expand Lvl 2</button>
         </div>
     </div>
 
-    <div id="dashboard" class="dashboard">
-        <div class="placeholder-text">Please load a game_analysis.json file to begin.</div>
+    <div class="main-container">
+        <div id="sidebar" class="sidebar">
+            <div class="sidebar-title">Navigation</div>
+            <div id="sidebar-content"></div>
+        </div>
+        <div id="dashboard" class="dashboard">
+            <div class="placeholder-text">Please load a game_analysis.json file to begin.</div>
+        </div>
     </div>
 
     <script src="script.js"></script>

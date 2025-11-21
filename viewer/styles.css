@@ -60,10 +60,61 @@ body {
     background-color: #2980b9;
 }
 
+.main-container {
+    display: flex;
+    min-height: calc(100vh - 80px); /* Adjust based on header height */
+}
+
+.sidebar {
+    width: 250px;
+    background-color: #fff;
+    border-right: 1px solid #e0e0e0;
+    padding: 1rem;
+    position: sticky;
+    top: 80px; /* Below header */
+    height: calc(100vh - 80px);
+    overflow-y: auto;
+    flex-shrink: 0;
+}
+
+.sidebar-title {
+    font-weight: 600;
+    color: #2c3e50;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid #eee;
+}
+
+.sidebar-btn {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 0.5rem;
+    margin-bottom: 0.25rem;
+    background: none;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    color: #555;
+    font-size: 0.9rem;
+    transition: background-color 0.2s;
+}
+
+.sidebar-btn:hover {
+    background-color: #f0f0f0;
+    color: #2980b9;
+}
+
+.sidebar-btn.active {
+    background-color: #e3f2fd;
+    color: #1565c0;
+    font-weight: 500;
+}
+
 .dashboard {
-    padding: 2rem;
-    max-width: 1600px;
-    margin: 0 auto;
+    padding: 1rem; /* Reduced padding */
+    flex-grow: 1;
+    overflow-x: hidden;
 }
 
 .placeholder-text {
@@ -78,23 +129,28 @@ body {
     background: white;
     border-radius: 8px;
     box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
+    padding: 1rem; /* Reduced padding */
+    margin-bottom: 1rem; /* Reduced margin */
     border: 1px solid #e0e0e0;
+    transition: box-shadow 0.2s;
+}
+
+.card.selected {
+    box-shadow: 0 0 0 2px #3498db;
 }
 
 .card-title {
     font-size: 1.1rem;
     font-weight: 600;
     color: #2c3e50;
-    margin-bottom: 1rem;
+    margin-bottom: 0.5rem; /* Reduced margin */
     border-bottom: 2px solid #eee;
-    padding-bottom: 0.5rem;
+    padding-bottom: 0.25rem; /* Reduced padding */
 }
 
 .field-row {
     display: flex;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.25rem; /* Reduced margin */
     align-items: baseline;
 }
 
@@ -102,17 +158,18 @@ body {
     font-weight: 600;
     min-width: 150px;
     color: #7f8c8d;
-    font-size: 0.9rem;
+    font-size: 0.85rem; /* Slightly smaller */
 }
 
 .field-value {
     color: #2c3e50;
     font-family: 'Consolas', monospace;
+    font-size: 0.9rem;
 }
 
 /* Table Styles */
 .table-container {
-    margin-top: 1rem;
+    margin-top: 0.5rem; /* Reduced margin */
     overflow-x: auto;
     background: white;
     border-radius: 6px;
@@ -122,22 +179,26 @@ body {
 .data-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.9rem;
+    font-size: 0.85rem; /* Slightly smaller */
 }
 
 .data-table th {
     background-color: #f8f9fa;
     text-align: left;
-    padding: .25rem 0.75rem;
+    padding: 0.5rem; /* Reduced padding */
     border-bottom: 2px solid #dee2e6;
     color: #495057;
     font-weight: 600;
 }
 
 .data-table td {
-    padding: 0.25rem 0.75rem;
+    padding: 0.5rem; /* Reduced padding */
     border-bottom: 1px solid #dee2e6;
     vertical-align: top;
+}
+
+.data-table tr.selected > td {
+    background-color: #e3f2fd;
 }
 
 .data-table tr:last-child td {
@@ -146,12 +207,12 @@ body {
 
 /* Collapsible Styles */
 .collapsible-wrapper {
-    margin: 0.0rem 0;
+    margin: 0.25rem 0; /* Reduced margin */
 }
 
 .collapsible-header {
     background-color: #e8f4f8;
-    padding: 0.5rem 1rem;
+    padding: 0.25rem 0.5rem; /* Reduced padding */
     border-radius: 4px;
     cursor: pointer;
     user-select: none;
@@ -161,6 +222,7 @@ body {
     color: #2980b9;
     border: 1px solid #bee5eb;
     transition: background-color 0.2s;
+    font-size: 0.9rem;
 }
 
 .collapsible-header:hover {
@@ -171,7 +233,7 @@ body {
     content: '▶';
     display: inline-block;
     margin-right: 0.5rem;
-    font-size: 0.8rem;
+    font-size: 0.7rem;
     transition: transform 0.2s;
 }
 
@@ -180,16 +242,34 @@ body {
 }
 
 .collapsible-content {
-    display: none;
-    /* padding: 1rem; */
+    /* display: none; handled by JS now */
+    padding: 0.5rem; /* Reduced padding */
     border-left: 3px solid #bee5eb;
-    margin-left: 1rem;
-    margin-top: 0.5rem;
+    margin-left: 0.5rem; /* Reduced margin */
+    margin-top: 0.25rem; /* Reduced margin */
     background-color: #fff;
 }
 
-.collapsible-wrapper.expanded .collapsible-content {
-    display: block;
+/* Detail Row Styles */
+.detail-row td {
+    padding: 0 0 0 1rem !important; /* Reduced padding */
+    background-color: #fff !important; /* Removed grey background */
+}
+
+.detail-content-wrapper {
+    padding: 0.5rem;
+    border-left: 2px solid #e0e0e0; /* Visual indicator instead of background */
+}
+
+.detail-field-wrapper {
+    margin-bottom: 0.5rem;
+}
+
+.detail-field-label {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+    color: #7f8c8d;
+    font-size: 0.85rem;
 }
 
 /* Specific styling for nested objects */

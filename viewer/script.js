@@ -2,9 +2,42 @@ document.addEventListener('DOMContentLoaded', () => {
     const fileInput = document.getElementById('fileInput');
     const loadDefaultBtn = document.getElementById('loadDefaultBtn');
     const dashboard = document.getElementById('dashboard');
+    const sidebar = document.getElementById('sidebar');
+    const expandLvl2Btn = document.getElementById('expandLvl2Btn');
 
-    fileInput.addEventListener('change', handleFileSelect);
-    loadDefaultBtn.addEventListener('click', loadDefaultFile);
+    let currentData = null;
+    let targetExpandDepth = 0;
+    let activePath = [];
+
+    // Intersection Observer for Sidebar Tracking
+    const observerOptions = {
+        root: null,
+        rootMargin: '-80px 0px -80% 0px', // Trigger when element is near the top
+        threshold: 0
+    };
+
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                const pathStr = entry.target.getAttribute('data-path');
+                if (pathStr) {
+                    const path = JSON.parse(pathStr);
+                    updateSidebar(path);
+                }
+            }
+        });
+    }, observerOptions);
+
+    if (fileInput) fileInput.addEventListener('change', handleFileSelect);
+    if (loadDefaultBtn) loadDefaultBtn.addEventListener('click', loadDefaultFile);
+    if (expandLvl2Btn) {
+        expandLvl2Btn.addEventListener('click', () => {
+            targetExpandDepth = 2;
+            if (currentData) {
+                renderDashboard(currentData);
+            }
+        });
+    }
 
     function handleFileSelect(event) {
         const file = event.target.files[0];
@@ -14,6 +47,8 @@ document.addEventListener('DOMContentLoaded', () => {
         reader.onload = (e) => {
             try {
                 const data = JSON.parse(e.target.result);
+                currentData = data;
+                targetExpandDepth = 0; // Reset depth on new file
                 renderDashboard(data);
             } catch (err) {
                 alert('Error parsing JSON: ' + err.message);
@@ -23,28 +58,75 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function loadDefaultFile() {
-        // Try to fetch relative to the HTML file
         fetch('../logs/game_analysis.json')
             .then(response => {
                 if (!response.ok) throw new Error('Network response was not ok');
                 return response.json();
             })
-            .then(data => renderDashboard(data))
+            .then(data => {
+                currentData = data;
+                targetExpandDepth = 0;
+                renderDashboard(data);
+            })
             .catch(err => {
                 alert('Could not load default file. Please use the "Choose File" button.\nError: ' + err.message);
             });
     }
 
-    function renderDashboard(data) {
-        dashboard.innerHTML = '';
-        // The root is an object (Round 1)
-        dashboard.appendChild(renderObject(data, 'Game Analysis Root', true));
+    function updateSidebar(path) {
+        if (!sidebar) return;
+        sidebar.innerHTML = '';
+
+        const title = document.createElement('div');
+        title.className = 'sidebar-title';
+        title.textContent = 'Navigation';
+        sidebar.appendChild(title);
+
+        path.forEach((segment, index) => {
+            const btn = document.createElement('button');
+            btn.className = 'sidebar-btn';
+            if (index === path.length - 1) btn.classList.add('active');
+            
+            // Format segment for display
+            let displayText = segment;
+            if (segment.startsWith('Round')) displayText = segment;
+            else if (segment.length > 20) displayText = segment.substring(0, 17) + '...';
+            
+            btn.textContent = displayText;
+            btn.title = segment; // Tooltip for full name
+            
+            btn.onclick = () => {
+                // Find element with this path
+                const targetPathStr = JSON.stringify(path.slice(0, index + 1));
+                const target = document.querySelector(`[data-path='${targetPathStr}']`);
+                if (target) {
+                    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+            };
+
+            sidebar.appendChild(btn);
+        });
     }
 
-    // Helper to create a lazy collapsible section
-    function createLazyCollapsible(headerText, renderContentFn, autoExpand = false) {
+    function renderDashboard(data) {
+        dashboard.innerHTML = '';
+        observer.disconnect(); // Clear old observations
+        
+        // The root is an object
+        const rootPath = ['Root'];
+        const rootEl = renderObject(data, 'Game Analysis Root', true, 0, rootPath);
+        dashboard.appendChild(rootEl);
+        
+        updateSidebar(rootPath);
+    }
+
+    function createLazyCollapsible(headerText, renderContentFn, autoExpand = false, path = []) {
         const wrapper = document.createElement('div');
         wrapper.className = 'collapsible-wrapper';
+        if (path.length > 0) {
+            wrapper.setAttribute('data-path', JSON.stringify(path));
+            observer.observe(wrapper);
+        }
         
         const header = document.createElement('div');
         header.className = 'collapsible-header';
@@ -53,26 +135,29 @@ document.addEventListener('DOMContentLoaded', () => {
         const content = document.createElement('div');
         content.className = 'collapsible-content';
         
+        let isRendered = false;
+
         const toggle = (e) => {
-            if (e) {
-                e.stopPropagation();
-            }
+            if (e) e.stopPropagation();
             
             const isExpanding = !wrapper.classList.contains('expanded');
             wrapper.classList.toggle('expanded');
 
             if (isExpanding) {
-                // Render content on expand
-                const contentEl = renderContentFn();
-                content.innerHTML = ''; // Clear just in case
-                if (contentEl) {
-                    content.appendChild(contentEl);
-                } else {
-                    content.textContent = 'No content';
+                if (!isRendered || content.innerHTML === '') {
+                    const contentEl = renderContentFn();
+                    content.innerHTML = '';
+                    if (contentEl) {
+                        content.appendChild(contentEl);
+                    } else {
+                        content.textContent = 'No content';
+                    }
+                    isRendered = true;
                 }
             } else {
-                // Remove content on collapse to save memory/DOM
+                // Clear content to save memory
                 content.innerHTML = '';
+                isRendered = false;
             }
         };
 
@@ -82,12 +167,12 @@ document.addEventListener('DOMContentLoaded', () => {
         wrapper.appendChild(content);
 
         if (autoExpand) {
-            // Manually trigger expansion logic
             wrapper.classList.add('expanded');
             const contentEl = renderContentFn();
             if (contentEl) {
                 content.appendChild(contentEl);
             }
+            isRendered = true;
         }
 
         return wrapper;
@@ -101,7 +186,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return null;
     }
 
-    function renderValue(key, value) {
+    function renderValue(key, value, depth, path) {
         if (value === null || value === undefined) {
             const span = document.createElement('span');
             span.className = 'field-value';
@@ -110,7 +195,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (Array.isArray(value)) {
-            // Special handling for empty arrays
             if (value.length === 0) {
                 const span = document.createElement('span');
                 span.className = 'field-value';
@@ -118,31 +202,31 @@ document.addEventListener('DOMContentLoaded', () => {
                 return span;
             }
             
-            // Render array as a lazy collapsible table
+            const newPath = [...path, key];
             return createLazyCollapsible(
                 `${key} [${value.length}]`, 
-                () => renderTable(value), 
-                false // Collapse arrays by default
+                () => renderTable(value, depth + 1, newPath), 
+                depth < targetExpandDepth,
+                newPath
             );
         }
 
         if (typeof value === 'object') {
-            // Render object as a lazy collapsible card
             const businessKey = getBusinessKey(value);
             const header = businessKey ? `${key} - ${businessKey}` : key;
+            const newPath = [...path, businessKey || key];
             
             return createLazyCollapsible(
                 header,
-                () => renderObject(value),
-                false // Collapse objects by default
+                () => renderObject(value, null, false, depth + 1, newPath),
+                depth < targetExpandDepth,
+                newPath
             );
         }
 
-        // Primitive values
         const span = document.createElement('span');
         span.className = 'field-value';
         
-        // Format probabilities to 3 decimal places
         if (typeof value === 'number' && (key.includes('Probability') || key === 'drawProbability' || key === 'randomPlacementProbability')) {
              span.textContent = value.toFixed(3);
         } else {
@@ -151,9 +235,13 @@ document.addEventListener('DOMContentLoaded', () => {
         return span;
     }
 
-    function renderObject(obj, title = null, expanded = false) {
+    function renderObject(obj, title = null, expanded = false, depth = 0, path = []) {
         const card = document.createElement('div');
         card.className = 'card';
+        if (path.length > 0) {
+            card.setAttribute('data-path', JSON.stringify(path));
+            observer.observe(card);
+        }
 
         if (title) {
             const titleEl = document.createElement('div');
@@ -162,7 +250,6 @@ document.addEventListener('DOMContentLoaded', () => {
             card.appendChild(titleEl);
         }
 
-        // Separate primitive fields from complex fields (objects/arrays)
         const primitives = [];
         const complex = [];
 
@@ -174,7 +261,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        // Render primitives first
         primitives.forEach(key => {
             const row = document.createElement('div');
             row.className = 'field-row';
@@ -183,28 +269,24 @@ document.addEventListener('DOMContentLoaded', () => {
             label.className = 'field-label';
             label.textContent = key;
             
-            const valEl = renderValue(key, obj[key]);
+            const valEl = renderValue(key, obj[key], depth, path);
             
             row.appendChild(label);
             row.appendChild(valEl);
             card.appendChild(row);
         });
 
-        // Render complex fields
         complex.forEach(key => {
-            // For complex fields, we might want them to take full width or be collapsible
-            // renderValue returns a collapsible wrapper for objects/arrays
-            const valEl = renderValue(key, obj[key]);
+            const valEl = renderValue(key, obj[key], depth, path);
             card.appendChild(valEl);
         });
 
         return card;
     }
 
-    function renderTable(arr) {
+    function renderTable(arr, depth, path) {
         if (!arr.length) return document.createTextNode('Empty Array');
 
-        // Flatten nextRound for better display
         const processedArr = arr.map(item => {
             if (item && typeof item === 'object' && item.nextRound && typeof item.nextRound === 'object') {
                 const { nextRound, ...rest } = item;
@@ -213,7 +295,6 @@ document.addEventListener('DOMContentLoaded', () => {
             return item;
         });
 
-        // Determine columns from all keys in all objects
         const allKeys = new Set();
         processedArr.forEach(item => {
             if (typeof item === 'object' && item !== null) {
@@ -223,11 +304,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        // Separate primitive and complex columns
         const primitiveCols = [];
         const complexCols = [];
-        
-        // Sample the first few items to determine type (heuristic)
         const sampleSize = Math.min(processedArr.length, 5);
         
         allKeys.forEach(key => {
@@ -240,7 +318,6 @@ document.addEventListener('DOMContentLoaded', () => {
             for (let i = 0; i < sampleSize; i++) {
                 const val = processedArr[i][key];
                 if (typeof val === 'object' && val !== null) {
-                    // Check if it's a simple array of strings (like actions)
                     if (Array.isArray(val) && val.every(v => typeof v === 'string')) {
                         isComplex = false;
                     } else {
@@ -263,11 +340,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const table = document.createElement('table');
         table.className = 'data-table';
         
-        // Header
         const thead = document.createElement('thead');
         const headerRow = document.createElement('tr');
         
-        // Add expand column if there are complex fields
         if (complexCols.length > 0) {
             const th = document.createElement('th');
             th.style.width = '30px';
@@ -282,12 +357,11 @@ document.addEventListener('DOMContentLoaded', () => {
         thead.appendChild(headerRow);
         table.appendChild(thead);
 
-        // Body
         const tbody = document.createElement('tbody');
-        processedArr.forEach(item => {
+        processedArr.forEach((item, index) => {
             const tr = document.createElement('tr');
+            const itemPath = [...path, `[${index}]`];
             
-            // Expand button cell
             if (complexCols.length > 0) {
                 const td = document.createElement('td');
                 const btn = document.createElement('button');
@@ -298,13 +372,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 btn.style.background = 'none';
                 btn.style.color = '#2980b9';
                 btn.style.fontWeight = 'bold';
-                
                 td.appendChild(btn);
                 tr.appendChild(td);
             }
 
             if (typeof item !== 'object' || item === null) {
-                // Array of primitives
                 const td = document.createElement('td');
                 td.textContent = String(item);
                 tr.appendChild(td);
@@ -313,7 +385,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     const td = document.createElement('td');
                     const val = item[col];
                     
-                    // Special handling for 'actions' array of strings
                     if (col === 'actions' && Array.isArray(val) && val.every(v => typeof v === 'string')) {
                         val.forEach(action => {
                             const badge = document.createElement('span');
@@ -322,7 +393,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             td.appendChild(badge);
                         });
                     } else {
-                        td.appendChild(renderValue(col, val));
+                        td.appendChild(renderValue(col, val, depth, itemPath));
                     }
                     
                     tr.appendChild(td);
@@ -330,7 +401,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             tbody.appendChild(tr);
 
-            // Detail Row for complex fields
             if (complexCols.length > 0) {
                 const detailTr = document.createElement('tr');
                 detailTr.style.display = 'none';
@@ -338,28 +408,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 const detailTd = document.createElement('td');
                 detailTd.colSpan = primitiveCols.length + 1;
-                detailTd.style.padding = '0 0 0 2rem';
-                detailTd.style.backgroundColor = '#f8f9fa';
                 
                 const detailContent = document.createElement('div');
-                detailContent.style.padding = '1rem';
+                detailContent.className = 'detail-content-wrapper';
                 
-                // Render complex fields here
                 complexCols.forEach(col => {
                     const val = item[col];
                     if (val !== undefined && val !== null) {
                         const wrapper = document.createElement('div');
-                        wrapper.style.marginBottom = '1rem';
+                        wrapper.className = 'detail-field-wrapper';
                         
-                        // Label
                         const label = document.createElement('div');
+                        label.className = 'detail-field-label';
                         label.textContent = col;
-                        label.style.fontWeight = '600';
-                        label.style.marginBottom = '0.5rem';
-                        label.style.color = '#7f8c8d';
                         
                         wrapper.appendChild(label);
-                        wrapper.appendChild(renderValue(col, val));
+                        wrapper.appendChild(renderValue(col, val, depth + 1, [...itemPath, col]));
                         detailContent.appendChild(wrapper);
                     }
                 });
@@ -368,15 +432,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 detailTr.appendChild(detailTd);
                 tbody.appendChild(detailTr);
 
-                // Wire up the button
                 const btn = tr.querySelector('.row-expand-btn');
-                btn.onclick = (e) => {
-                    e.stopPropagation();
+                const toggleDetail = () => {
                     const isHidden = detailTr.style.display === 'none';
                     detailTr.style.display = isHidden ? 'table-row' : 'none';
                     btn.textContent = isHidden ? '▼' : '▶';
-                    tr.style.backgroundColor = isHidden ? '#e8f4f8' : '';
+                    tr.classList.toggle('selected', isHidden);
                 };
+
+                btn.onclick = (e) => {
+                    e.stopPropagation();
+                    toggleDetail();
+                };
+                
+                if (depth < targetExpandDepth) {
+                    toggleDetail();
+                }
             }
         });
         table.appendChild(tbody);
@@ -385,26 +456,11 @@ document.addEventListener('DOMContentLoaded', () => {
         return container;
     }
 
-    // Expose global functions for buttons
     window.collapseAll = () => {
         document.querySelectorAll('.collapsible-wrapper.expanded').forEach(el => {
             el.classList.remove('expanded');
-        });
-    };
-    
-    window.expandLevel = (level) => {
-        // Simple heuristic: expand the first N levels of collapsibles
-        // This is tricky with lazy loading. We can only expand what's rendered.
-        // For now, just expand the top level children
-        const root = document.querySelector('#dashboard > .card');
-        if (!root) return;
-        
-        // Find direct collapsible children
-        // This is a bit hacky for "Level 1", but works for immediate needs
-        const wrappers = Array.from(root.children).filter(c => c.classList.contains('collapsible-wrapper'));
-        wrappers.forEach(w => {
-            const header = w.querySelector('.collapsible-header');
-            if (header) header.click();
+            const content = el.querySelector('.collapsible-content');
+            if (content) content.innerHTML = '';
         });
     };
 });
