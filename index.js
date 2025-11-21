@@ -9,7 +9,7 @@ if (fs.existsSync('./logs')) {
 // Global settings
 const NUM_OF_PATHS = 2;
 const STARTING_DEPTH = 2;
-const MAX_ROUNDS = 2;
+const MAX_ROUNDS = 4;
 
 const playerEnum = Object.freeze({
     OFFENSE: 'O',

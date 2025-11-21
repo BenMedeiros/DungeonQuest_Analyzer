@@ -1,0 +1,210 @@
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #f5f5f5;
+    color: #333;
+}
+
+.header {
+    background-color: #2c3e50;
+    color: white;
+    padding: 1rem;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.header h1 {
+    margin: 0;
+    font-size: 1.5rem;
+}
+
+.title-container {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.header-logo {
+    height: 40px;
+    width: auto;
+    border-radius: 4px;
+}
+
+.controls {
+    margin-bottom: 1rem;
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+}
+
+.quick-buttons {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.quick-btn {
+    background-color: #3498db;
+    border: none;
+    color: white;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+
+.quick-btn:hover {
+    background-color: #2980b9;
+}
+
+.dashboard {
+    padding: 2rem;
+    max-width: 1600px;
+    margin: 0 auto;
+}
+
+.placeholder-text {
+    text-align: center;
+    color: #7f8c8d;
+    margin-top: 4rem;
+    font-size: 1.2rem;
+}
+
+/* Card Styles */
+.card {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    border: 1px solid #e0e0e0;
+}
+
+.card-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #2c3e50;
+    margin-bottom: 1rem;
+    border-bottom: 2px solid #eee;
+    padding-bottom: 0.5rem;
+}
+
+.field-row {
+    display: flex;
+    margin-bottom: 0.5rem;
+    align-items: baseline;
+}
+
+.field-label {
+    font-weight: 600;
+    min-width: 150px;
+    color: #7f8c8d;
+    font-size: 0.9rem;
+}
+
+.field-value {
+    color: #2c3e50;
+    font-family: 'Consolas', monospace;
+}
+
+/* Table Styles */
+.table-container {
+    margin-top: 1rem;
+    overflow-x: auto;
+    background: white;
+    border-radius: 6px;
+    border: 1px solid #eee;
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.data-table th {
+    background-color: #f8f9fa;
+    text-align: left;
+    padding: .25rem 0.75rem;
+    border-bottom: 2px solid #dee2e6;
+    color: #495057;
+    font-weight: 600;
+}
+
+.data-table td {
+    padding: 0.25rem 0.75rem;
+    border-bottom: 1px solid #dee2e6;
+    vertical-align: top;
+}
+
+.data-table tr:last-child td {
+    border-bottom: none;
+}
+
+/* Collapsible Styles */
+.collapsible-wrapper {
+    margin: 0.0rem 0;
+}
+
+.collapsible-header {
+    background-color: #e8f4f8;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    font-weight: 500;
+    color: #2980b9;
+    border: 1px solid #bee5eb;
+    transition: background-color 0.2s;
+}
+
+.collapsible-header:hover {
+    background-color: #d1ecf1;
+}
+
+.collapsible-header::before {
+    content: '▶';
+    display: inline-block;
+    margin-right: 0.5rem;
+    font-size: 0.8rem;
+    transition: transform 0.2s;
+}
+
+.collapsible-wrapper.expanded .collapsible-header::before {
+    transform: rotate(90deg);
+}
+
+.collapsible-content {
+    display: none;
+    /* padding: 1rem; */
+    border-left: 3px solid #bee5eb;
+    margin-left: 1rem;
+    margin-top: 0.5rem;
+    background-color: #fff;
+}
+
+.collapsible-wrapper.expanded .collapsible-content {
+    display: block;
+}
+
+/* Specific styling for nested objects */
+.nested-object {
+    margin-left: 0;
+}
+
+/* Turn Actions specific */
+.action-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    margin-right: 4px;
+}
+
+.action-spawn { background-color: #ffebee; color: #c62828; border: 1px solid #ffcdd2; }
+.action-move { background-color: #e3f2fd; color: #1565c0; border: 1px solid #bbdefb; }
