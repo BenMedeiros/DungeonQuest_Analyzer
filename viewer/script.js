@@ -25,25 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let nodes = [], links = [], nodeIdCounter = 0;
     let width, height;
 
-    // Intersection Observer for Sidebar Tracking
-    const observerOptions = {
-        root: null,
-        rootMargin: '-80px 0px -80% 0px', // Trigger when element is near the top
-        threshold: 0
-    };
-
-    const observer = new IntersectionObserver((entries) => {
-        if (currentView !== 'tree') return; // Only track in tree view
-        entries.forEach(entry => {
-            if (entry.isIntersecting) {
-                const pathStr = entry.target.getAttribute('data-path');
-                if (pathStr) {
-                    const path = JSON.parse(pathStr);
-                    updateSidebar(path);
-                }
-            }
-        });
-    }, observerOptions);
+    // Intersection Observer removed as per user request
 
     if (fileInput) fileInput.addEventListener('change', handleFileSelect);
     if (loadDefaultBtn) loadDefaultBtn.addEventListener('click', loadDefaultFile);
@@ -464,10 +446,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateDetails(node) {
+        // Normalize input: node can be a D3 node or a simple object from Tree View
+        // D3 node: { name, type, data, ... }
+        // Tree object: { name, type, data }
+        
         const { props } = getChildren(node.data);
         let html = `<div class="sidebar-title">${node.name}</div>`;
-        html += `<div class="detail-item"><span class="detail-label">Type</span><span class="detail-value">${node.type}</span></div>`;
+        html += `<div class="detail-item"><span class="detail-label">Type</span><span class="detail-value">${node.type || 'object'}</span></div>`;
         
+        // Add Center Button
+        html += `<button id="centerNodeBtn" class="sidebar-btn" style="margin-bottom: 1rem; background-color: #e3f2fd; color: #1565c0;">Center on Node</button>`;
+
         for (const [key, value] of Object.entries(props)) {
             html += `
                 <div class="detail-item">
@@ -477,6 +466,38 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
         }
         sidebarDetails.innerHTML = html;
+
+        // Attach event listener to the new button
+        const btn = document.getElementById('centerNodeBtn');
+        if (btn) {
+            btn.onclick = () => {
+                if (currentView === 'graph') {
+                    // If we have a D3 node reference (node.x exists), use it
+                    if (node.x !== undefined) {
+                        centerNode(node);
+                    } else if (selectedD3Node) {
+                        // Fallback to selectedD3Node if it matches
+                        centerNode(selectedD3Node);
+                    } else {
+                        // Try to find it in graph
+                        const found = nodes.find(n => n.name === node.name); // Weak matching
+                        if (found) centerNode(found);
+                    }
+                } else {
+                    // Tree View: Scroll to element
+                    if (selectedNodePath) {
+                        const pathStr = JSON.stringify(selectedNodePath);
+                        const safeSelector = pathStr.replace(/'/g, "\\'");
+                        const target = document.querySelector(`[data-path='${safeSelector}']`);
+                        if (target) {
+                            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            target.classList.add('highlight-node');
+                            setTimeout(() => target.classList.remove('highlight-node'), 2000);
+                        }
+                    }
+                }
+            };
+        }
     }
 
     function centerNode(node) {
@@ -657,7 +678,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderDashboard(data) {
         dashboard.innerHTML = '';
-        observer.disconnect(); // Clear old observations
         
         // The root is an object
         const rootPath = ['Root'];
@@ -672,7 +692,7 @@ document.addEventListener('DOMContentLoaded', () => {
         wrapper.className = 'collapsible-wrapper';
         if (path.length > 0) {
             wrapper.setAttribute('data-path', JSON.stringify(path));
-            observer.observe(wrapper);
+            // observer.observe(wrapper); // Removed observer
         }
         
         const header = document.createElement('div');
@@ -803,7 +823,19 @@ document.addEventListener('DOMContentLoaded', () => {
         card.className = 'card';
         if (path.length > 0) {
             card.setAttribute('data-path', JSON.stringify(path));
-            observer.observe(card);
+            // observer.observe(card); // Removed observer
+            
+            // Add click handler for selection
+            card.addEventListener('click', (e) => {
+                e.stopPropagation();
+                selectedNodePath = path;
+                updateSidebar(path);
+                updateDetails({
+                    name: title || path[path.length - 1] || 'Object',
+                    type: 'object',
+                    data: obj
+                });
+            });
         }
 
         if (title) {
@@ -1007,6 +1039,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     e.stopPropagation();
                     selectedNodePath = itemPath;
                     updateSidebar(itemPath);
+                    
+                    // Update details for table row item
+                    updateDetails({
+                        name: `Item [${index}]`,
+                        type: 'object',
+                        data: item
+                    });
+                    
                     toggleDetail();
                 };
                 
