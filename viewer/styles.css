@@ -148,6 +148,15 @@ body {
     overflow-x: hidden;
 }
 
+.highlight-node {
+    animation: highlight 2s ease-out;
+}
+
+@keyframes highlight {
+    0% { background-color: #fff3cd; }
+    100% { background-color: transparent; }
+}
+
 .placeholder-text {
     text-align: center;
     color: #7f8c8d;

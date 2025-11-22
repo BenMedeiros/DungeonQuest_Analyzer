@@ -1,8 +1,11 @@
+import { log } from 'console';
 import fs from 'fs';
 
+const logsDir = '.././logs';
+
 // Clear logs folder at startup
-if (fs.existsSync('./logs')) {
-    fs.rmSync('./logs', { recursive: true, force: true });
+if (fs.existsSync(logsDir)) {
+    fs.rmSync(logsDir, { recursive: true, force: true });
     console.log('Cleared previous logs');
 }
 
@@ -273,10 +276,10 @@ function printGameAnalysis(gameAnalysis, indent = '') {
     if (!gameAnalysis) return;
 
     // Save gameAnalysis to file
-    if (!fs.existsSync('./logs')) {
-        fs.mkdirSync('./logs', { recursive: true });
+    if (!fs.existsSync(logsDir)) {
+        fs.mkdirSync(logsDir, { recursive: true });
     }
-    const filename = `./logs/game_analysis.json`;
+    const filename = `${logsDir}/game_analysis.json`;
     fs.writeFileSync(filename, JSON.stringify(gameAnalysis, null, 2), 'utf8');
     console.log(`\nGame analysis saved to ${filename}`);
 }

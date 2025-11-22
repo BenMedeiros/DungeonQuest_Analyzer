@@ -2,7 +2,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const fileInput = document.getElementById('fileInput');
     const loadDefaultBtn = document.getElementById('loadDefaultBtn');
     const dashboard = document.getElementById('dashboard');
+    const expandLvl1Btn = document.getElementById('expandLvl1Btn');
     const expandLvl2Btn = document.getElementById('expandLvl2Btn');
+    const expandLvl3Btn = document.getElementById('expandLvl3Btn');
+    const collapseAllBtn = document.getElementById('collapseAllBtn');
     const toggleViewBtn = document.getElementById('toggleViewBtn');
     const vizContainer = document.getElementById('viz-container');
     const sidebarNav = document.getElementById('sidebar-nav');
@@ -14,6 +17,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentView = 'tree'; // 'tree' or 'graph'
     let isTreeInitialized = false;
     let isGraphInitialized = false;
+    let selectedNodePath = null; // For Tree View sync
+    let selectedD3Node = null;   // For Graph View sync
     
     // D3 Variables
     let svg, g, zoom, simulation;
@@ -42,25 +47,129 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (fileInput) fileInput.addEventListener('change', handleFileSelect);
     if (loadDefaultBtn) loadDefaultBtn.addEventListener('click', loadDefaultFile);
-    if (expandLvl2Btn) {
-        expandLvl2Btn.addEventListener('click', () => {
-            targetExpandDepth = 2;
-            if (currentData) {
-                if (currentView === 'tree') {
-                    renderDashboard(currentData);
-                } else {
-                    // Maybe expand graph? For now just switch to tree
-                    alert("Switching to Tree View to expand levels.");
-                    switchView('tree');
-                    renderDashboard(currentData);
+    
+    if (expandLvl1Btn) expandLvl1Btn.addEventListener('click', () => handleExpand(1));
+    if (expandLvl2Btn) expandLvl2Btn.addEventListener('click', () => handleExpand(2));
+    if (expandLvl3Btn) expandLvl3Btn.addEventListener('click', () => handleExpand(3));
+    if (collapseAllBtn) collapseAllBtn.addEventListener('click', () => {
+        if (currentView === 'tree') {
+            document.querySelectorAll('.collapsible-wrapper.expanded').forEach(el => {
+                el.classList.remove('expanded');
+                const content = el.querySelector('.collapsible-content');
+                if (content) content.innerHTML = '';
+            });
+        } else {
+            // Collapse all in graph - reset to root
+            if (nodes.length > 0) {
+                const root = nodes.find(n => n.type === 'root');
+                if (root) {
+                    // Collapse everything else
+                    nodes.forEach(n => {
+                        if (n !== root && n.expanded) collapseNode(n);
+                    });
+                    // Reset root expansion if needed, or just keep root expanded
+                    // Actually collapseNode logic might need to be called on root's children?
+                    // Simpler: Re-init graph
+                    initGraph(currentData);
                 }
             }
-        });
-    }
+        }
+    });
+
     if (toggleViewBtn) {
         toggleViewBtn.addEventListener('click', () => {
             const newView = currentView === 'tree' ? 'graph' : 'tree';
             switchView(newView);
+        });
+    }
+
+    function handleExpand(depth) {
+        if (!currentData) return;
+
+        if (currentView === 'tree') {
+            // If we have a selected path, try to expand from there
+            // For now, the original logic was global expansion. 
+            // The user asked for "actively selected node".
+            // In tree view, we don't strictly have a "selected node" variable yet unless we track clicks.
+            // Let's assume if selectedNodePath is set, we expand that. Otherwise global.
+            
+            if (selectedNodePath && selectedNodePath.length > 0) {
+                // Find the element
+                const pathStr = JSON.stringify(selectedNodePath);
+                // Escape single quotes for selector
+                const safeSelector = pathStr.replace(/'/g, "\\'");
+                const target = document.querySelector(`[data-path='${safeSelector}']`);
+                if (target) {
+                    // We need to expand this node and its children up to depth
+                    // This is tricky with lazy loading. We might need to force render.
+                    // For now, let's stick to the original global behavior if no selection, 
+                    // or implement a recursive expander for the target.
+                    expandTreeRecursive(target, depth);
+                } else {
+                    // Fallback to global
+                    targetExpandDepth = depth;
+                    renderDashboard(currentData);
+                }
+            } else {
+                targetExpandDepth = depth;
+                renderDashboard(currentData);
+            }
+        } else {
+            // Graph View
+            const nodeToExpand = selectedD3Node || nodes.find(n => n.type === 'root');
+            if (nodeToExpand) {
+                expandGraphRecursive(nodeToExpand, depth);
+            }
+        }
+    }
+
+    function expandTreeRecursive(element, depth) {
+        if (depth <= 0) return;
+        
+        // If it's a wrapper, expand it
+        if (element.classList.contains('collapsible-wrapper')) {
+            if (!element.classList.contains('expanded')) {
+                element.querySelector('.collapsible-header').click();
+            }
+            
+            // Wait for render? The click handler is synchronous in our implementation
+            const content = element.querySelector('.collapsible-content');
+            if (content) {
+                const children = content.querySelectorAll('.collapsible-wrapper');
+                children.forEach(child => expandTreeRecursive(child, depth - 1));
+                
+                // Also handle tables with complex rows
+                const tableRows = content.querySelectorAll('.row-expand-btn');
+                tableRows.forEach(btn => {
+                    // Check if already expanded
+                    if (btn.textContent === '▶') {
+                        btn.click();
+                    }
+                    // Recurse into details? Table details structure is different.
+                    // The detail row is the next sibling
+                    const tr = btn.closest('tr');
+                    const detailTr = tr.nextElementSibling;
+                    if (detailTr && detailTr.classList.contains('detail-row')) {
+                        const wrappers = detailTr.querySelectorAll('.detail-field-wrapper > .collapsible-wrapper');
+                        wrappers.forEach(w => expandTreeRecursive(w, depth - 1));
+                    }
+                });
+            }
+        }
+    }
+
+    function expandGraphRecursive(node, depth) {
+        if (depth <= 0) return;
+        
+        if (!node.expanded) {
+            expandNode(node);
+        }
+        
+        // Get children
+        const childLinks = links.filter(l => l.source.id === node.id);
+        childLinks.forEach(l => {
+            const childNode = l.target;
+            expandGraphRecursive(childNode, depth - 1);
         });
     }
 
@@ -69,27 +178,86 @@ document.addEventListener('DOMContentLoaded', () => {
         if (view === 'tree') {
             dashboard.style.display = 'block';
             vizContainer.style.display = 'none';
-            sidebarNav.style.display = 'block';
-            sidebarDetails.style.display = 'none';
+            // sidebarNav.style.display = 'block'; // Always visible
+            // sidebarDetails.style.display = 'none'; // Always visible
             toggleViewBtn.textContent = 'Switch to Graph View';
             
             if (currentData && !isTreeInitialized) {
                 renderDashboard(currentData);
                 isTreeInitialized = true;
             }
+
+            // Sync: Scroll to selected node
+            if (selectedNodePath) {
+                setTimeout(() => {
+                    const pathStr = JSON.stringify(selectedNodePath);
+                    const safeSelector = pathStr.replace(/'/g, "\\'");
+                    const target = document.querySelector(`[data-path='${safeSelector}']`);
+                    if (target) {
+                        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        // Highlight it?
+                        target.classList.add('highlight-node'); // We should add CSS for this
+                        setTimeout(() => target.classList.remove('highlight-node'), 2000);
+                    }
+                }, 100);
+            }
+
         } else {
             dashboard.style.display = 'none';
             vizContainer.style.display = 'block';
-            sidebarNav.style.display = 'none';
-            sidebarDetails.style.display = 'block';
+            // sidebarNav.style.display = 'none'; // Always visible
+            // sidebarDetails.style.display = 'block'; // Always visible
             toggleViewBtn.textContent = 'Switch to Tree View';
             
             if (currentData && !isGraphInitialized) {
                 initGraph(currentData);
                 isGraphInitialized = true;
             }
+
+            // Sync: Center on selected node
+            if (selectedNodePath && nodes.length > 0) {
+                // Find node by path
+                // This is tricky because graph nodes are created dynamically.
+                // We might need to expand the path to find the node.
+                // For now, let's try to find it if it exists.
+                const targetNode = findNodeByPath(selectedNodePath);
+                if (targetNode) {
+                    centerNode(targetNode);
+                    updateDetails(targetNode);
+                    selectedD3Node = targetNode;
+                }
+            }
         }
     }
+
+    function findNodeByPath(path) {
+        // Path is array of names/keys.
+        // Root is nodes[0] usually.
+        // We need to traverse or search.
+        // Since nodes have 'data' and 'name', we can try to match.
+        // But graph nodes are flat list.
+        // Best bet: Search nodes for name match of last path segment?
+        // Names might not be unique.
+        // Let's try to match the sequence.
+        
+        const targetName = path[path.length - 1];
+        const candidates = nodes.filter(n => n.name === targetName);
+        
+        for (const node of candidates) {
+            let curr = node;
+            let match = true;
+            for (let i = path.length - 1; i >= 0; i--) {
+                if (!curr) { match = false; break; }
+                // Root name check might be different
+                if (i === 0 && curr.type === 'root') break; // Root match
+                if (curr.name !== path[i]) { match = false; break; }
+                curr = curr.parent;
+            }
+            if (match) return node;
+        }
+        return null;
+    }
+
 
     function handleFileSelect(event) {
         const file = event.target.files[0];
@@ -360,6 +528,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         nodeMerge.on("click", (event, d) => {
             event.stopPropagation();
+            selectedD3Node = d; // Update global state
             updateDetails(d);
             updateSidebarFromNode(d);
             centerNode(d);
@@ -413,6 +582,7 @@ document.addEventListener('DOMContentLoaded', () => {
             path.unshift(curr.name);
             curr = curr.parent;
         }
+        selectedNodePath = path; // Update global state
         updateSidebar(path);
     }
 
@@ -420,10 +590,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!sidebarNav) return;
         sidebarNav.innerHTML = '';
 
-        const title = document.createElement('div');
-        title.className = 'sidebar-title';
-        title.textContent = 'Navigation';
-        sidebarNav.appendChild(title);
+        // Title removed to avoid duplication
 
         path.forEach((segment, index) => {
             const btn = document.createElement('button');
@@ -441,10 +608,26 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.onclick = () => {
                 if (currentView === 'tree') {
                     // Find element with this path
+                    // We need to be careful with the selector. 
+                    // JSON.stringify might produce strings that need escaping in CSS selectors.
+                    // Instead of querySelector, let's iterate or use a safer method if possible.
+                    // But querySelector is fastest. Let's try to escape single quotes.
                     const targetPathStr = JSON.stringify(path.slice(0, index + 1));
-                    const target = document.querySelector(`[data-path='${targetPathStr}']`);
+                    // Escape single quotes in the attribute value for the selector
+                    const safeSelector = targetPathStr.replace(/'/g, "\\'");
+                    const target = document.querySelector(`[data-path='${safeSelector}']`);
+                    
                     if (target) {
                         target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        // Also update selection state to this node
+                        selectedNodePath = path.slice(0, index + 1);
+                        // Re-render sidebar to show this as active? 
+                        // The click handler above already sets active class on button creation, 
+                        // but if we click a parent, we might want to update the sidebar to show *that* path?
+                        // Usually navigation jumps to the item. 
+                        // If I click "Root" in "Root > Child", do I want to see just "Root"?
+                        // Yes, probably.
+                        updateSidebar(selectedNodePath);
                     }
                 } else {
                     // Graph view navigation
@@ -484,7 +667,7 @@ document.addEventListener('DOMContentLoaded', () => {
         updateSidebar(rootPath);
     }
 
-    function createLazyCollapsible(headerText, renderContentFn, autoExpand = false, path = []) {
+    function createLazyCollapsible(headerText, renderContentFn, autoExpand = false, path = [], dataContext = null) {
         const wrapper = document.createElement('div');
         wrapper.className = 'collapsible-wrapper';
         if (path.length > 0) {
@@ -504,6 +687,20 @@ document.addEventListener('DOMContentLoaded', () => {
         const toggle = (e) => {
             if (e) e.stopPropagation();
             
+            // Update selection
+            if (path.length > 0) {
+                selectedNodePath = path;
+                updateSidebar(path);
+                
+                if (dataContext) {
+                    updateDetails({
+                        name: headerText,
+                        type: 'object',
+                        data: dataContext
+                    });
+                }
+            }
+
             const isExpanding = !wrapper.classList.contains('expanded');
             wrapper.classList.toggle('expanded');
 
@@ -571,7 +768,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 `${key} [${value.length}]`, 
                 () => renderTable(value, depth + 1, newPath), 
                 depth < targetExpandDepth,
-                newPath
+                newPath,
+                value
             );
         }
 
@@ -584,7 +782,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 header,
                 () => renderObject(value, null, false, depth + 1, newPath),
                 depth < targetExpandDepth,
-                newPath
+                newPath,
+                value
             );
         }
 
@@ -806,6 +1005,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 btn.onclick = (e) => {
                     e.stopPropagation();
+                    selectedNodePath = itemPath;
+                    updateSidebar(itemPath);
                     toggleDetail();
                 };
                 
