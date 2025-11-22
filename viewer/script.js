@@ -2,12 +2,23 @@ document.addEventListener('DOMContentLoaded', () => {
     const fileInput = document.getElementById('fileInput');
     const loadDefaultBtn = document.getElementById('loadDefaultBtn');
     const dashboard = document.getElementById('dashboard');
-    const sidebar = document.getElementById('sidebar');
     const expandLvl2Btn = document.getElementById('expandLvl2Btn');
+    const toggleViewBtn = document.getElementById('toggleViewBtn');
+    const vizContainer = document.getElementById('viz-container');
+    const sidebarNav = document.getElementById('sidebar-nav');
+    const sidebarDetails = document.getElementById('sidebar-details');
 
     let currentData = null;
     let targetExpandDepth = 0;
     let activePath = [];
+    let currentView = 'tree'; // 'tree' or 'graph'
+    let isTreeInitialized = false;
+    let isGraphInitialized = false;
+    
+    // D3 Variables
+    let svg, g, zoom, simulation;
+    let nodes = [], links = [], nodeIdCounter = 0;
+    let width, height;
 
     // Intersection Observer for Sidebar Tracking
     const observerOptions = {
@@ -17,6 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const observer = new IntersectionObserver((entries) => {
+        if (currentView !== 'tree') return; // Only track in tree view
         entries.forEach(entry => {
             if (entry.isIntersecting) {
                 const pathStr = entry.target.getAttribute('data-path');
@@ -34,9 +46,49 @@ document.addEventListener('DOMContentLoaded', () => {
         expandLvl2Btn.addEventListener('click', () => {
             targetExpandDepth = 2;
             if (currentData) {
-                renderDashboard(currentData);
+                if (currentView === 'tree') {
+                    renderDashboard(currentData);
+                } else {
+                    // Maybe expand graph? For now just switch to tree
+                    alert("Switching to Tree View to expand levels.");
+                    switchView('tree');
+                    renderDashboard(currentData);
+                }
             }
         });
+    }
+    if (toggleViewBtn) {
+        toggleViewBtn.addEventListener('click', () => {
+            const newView = currentView === 'tree' ? 'graph' : 'tree';
+            switchView(newView);
+        });
+    }
+
+    function switchView(view) {
+        currentView = view;
+        if (view === 'tree') {
+            dashboard.style.display = 'block';
+            vizContainer.style.display = 'none';
+            sidebarNav.style.display = 'block';
+            sidebarDetails.style.display = 'none';
+            toggleViewBtn.textContent = 'Switch to Graph View';
+            
+            if (currentData && !isTreeInitialized) {
+                renderDashboard(currentData);
+                isTreeInitialized = true;
+            }
+        } else {
+            dashboard.style.display = 'none';
+            vizContainer.style.display = 'block';
+            sidebarNav.style.display = 'none';
+            sidebarDetails.style.display = 'block';
+            toggleViewBtn.textContent = 'Switch to Tree View';
+            
+            if (currentData && !isGraphInitialized) {
+                initGraph(currentData);
+                isGraphInitialized = true;
+            }
+        }
     }
 
     function handleFileSelect(event) {
@@ -49,7 +101,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = JSON.parse(e.target.result);
                 currentData = data;
                 targetExpandDepth = 0; // Reset depth on new file
-                renderDashboard(data);
+                isTreeInitialized = false;
+                isGraphInitialized = false;
+                
+                if (currentView === 'tree') {
+                    renderDashboard(data);
+                    isTreeInitialized = true;
+                } else {
+                    initGraph(data);
+                    isGraphInitialized = true;
+                }
             } catch (err) {
                 alert('Error parsing JSON: ' + err.message);
             }
@@ -66,21 +127,303 @@ document.addEventListener('DOMContentLoaded', () => {
             .then(data => {
                 currentData = data;
                 targetExpandDepth = 0;
-                renderDashboard(data);
+                isTreeInitialized = false;
+                isGraphInitialized = false;
+
+                if (currentView === 'tree') {
+                    renderDashboard(data);
+                    isTreeInitialized = true;
+                } else {
+                    initGraph(data);
+                    isGraphInitialized = true;
+                }
             })
             .catch(err => {
                 alert('Could not load default file. Please use the "Choose File" button.\nError: ' + err.message);
             });
     }
 
+    // --- D3 Graph Logic ---
+
+    function initGraph(data) {
+        vizContainer.innerHTML = ''; // Clear previous graph
+        width = vizContainer.clientWidth;
+        height = vizContainer.clientHeight;
+
+        svg = d3.select("#viz-container").append("svg")
+            .attr("width", width)
+            .attr("height", height)
+            .on("contextmenu", (e) => e.preventDefault());
+
+        g = svg.append("g");
+
+        zoom = d3.zoom()
+            .scaleExtent([0.1, 4])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svg.call(zoom);
+
+        simulation = d3.forceSimulation()
+            .force("link", d3.forceLink().id(d => d.id).distance(100))
+            .force("charge", d3.forceManyBody().strength(-500))
+            .force("center", d3.forceCenter(width / 2, height / 2))
+            .force("collide", d3.forceCollide(50).iterations(2));
+
+        nodes = [];
+        links = [];
+        nodeIdCounter = 0;
+
+        // Create Root Node
+        const rootNode = {
+            id: `node_${nodeIdCounter++}`,
+            name: "Game Root",
+            type: "root",
+            data: data,
+            expanded: false,
+            x: width / 2,
+            y: height / 2
+        };
+
+        nodes.push(rootNode);
+        updateViz();
+        expandNode(rootNode);
+        
+        // Handle resize
+        window.addEventListener('resize', () => {
+            if (currentView === 'graph') {
+                width = vizContainer.clientWidth;
+                height = vizContainer.clientHeight;
+                svg.attr("width", width).attr("height", height);
+                simulation.force("center", d3.forceCenter(width / 2, height / 2));
+                simulation.alpha(0.3).restart();
+            }
+        });
+    }
+
+    function getChildren(data) {
+        const children = [];
+        const props = {};
+
+        if (Array.isArray(data)) {
+            data.forEach((item, index) => {
+                children.push({ key: `[${index}]`, value: item });
+            });
+        } else if (typeof data === 'object' && data !== null) {
+            for (const [key, value] of Object.entries(data)) {
+                if (typeof value === 'object' && value !== null) {
+                    children.push({ key: key, value: value });
+                } else {
+                    props[key] = value;
+                }
+            }
+        }
+        return { children, props };
+    }
+
+    function getNodeColor(type) {
+        const colors = {
+            root: "#e74c3c",
+            round: "#3498db",
+            turn: "#2ecc71",
+            placement: "#9b59b6",
+            default: "#95a5a6"
+        };
+        return colors[type] || colors.default;
+    }
+
+    function getNodeType(key, value) {
+        if (key.toLowerCase().includes('round')) return 'round';
+        if (key.toLowerCase().includes('turn')) return 'turn';
+        if (key.toLowerCase().includes('placement')) return 'placement';
+        return 'default';
+    }
+
+    function expandNode(node) {
+        if (node.expanded) return;
+
+        const { children } = getChildren(node.data);
+        if (children.length === 0) return;
+
+        const angleStep = (2 * Math.PI) / children.length;
+        const radius = 100;
+
+        children.forEach((child, index) => {
+            const childType = getNodeType(child.key, child.value);
+            const angle = index * angleStep;
+            const ix = node.x + radius * Math.cos(angle);
+            const iy = node.y + radius * Math.sin(angle);
+
+            const newNode = {
+                id: `node_${nodeIdCounter++}`,
+                name: child.key,
+                type: childType,
+                data: child.value,
+                expanded: false,
+                x: ix,
+                y: iy,
+                parent: node
+            };
+
+            nodes.push(newNode);
+            links.push({ source: node.id, target: newNode.id });
+        });
+
+        node.expanded = true;
+        updateViz();
+    }
+
+    function collapseNode(node) {
+        if (!node.expanded) return;
+
+        function getDescendantIds(parentId) {
+            const childLinks = links.filter(l => l.source.id === parentId);
+            let ids = [];
+            childLinks.forEach(l => {
+                ids.push(l.target.id);
+                ids = ids.concat(getDescendantIds(l.target.id));
+            });
+            return ids;
+        }
+
+        const idsToRemove = new Set(getDescendantIds(node.id));
+        nodes = nodes.filter(n => !idsToRemove.has(n.id));
+        links = links.filter(l => !idsToRemove.has(l.target.id) && !idsToRemove.has(l.source.id));
+
+        node.expanded = false;
+        updateViz();
+    }
+
+    function updateDetails(node) {
+        const { props } = getChildren(node.data);
+        let html = `<div class="sidebar-title">${node.name}</div>`;
+        html += `<div class="detail-item"><span class="detail-label">Type</span><span class="detail-value">${node.type}</span></div>`;
+        
+        for (const [key, value] of Object.entries(props)) {
+            html += `
+                <div class="detail-item">
+                    <span class="detail-label">${key}</span>
+                    <span class="detail-value">${value}</span>
+                </div>
+            `;
+        }
+        sidebarDetails.innerHTML = html;
+    }
+
+    function centerNode(node) {
+        const scale = 1.0; // Reduced from 1.5
+        const x = -node.x * scale + width / 2;
+        const y = -node.y * scale + height / 2;
+        
+        svg.transition().duration(750).call(
+            zoom.transform, 
+            d3.zoomIdentity.translate(x, y).scale(scale)
+        );
+    }
+
+    function updateViz() {
+        const link = g.selectAll(".link")
+            .data(links, d => d.target ? d.target.id : d.source + "-" + d.target);
+
+        link.exit().remove();
+
+        const linkEnter = link.enter().append("line")
+            .attr("class", "link")
+            .attr("stroke-width", 1);
+
+        const linkMerge = linkEnter.merge(link);
+
+        const node = g.selectAll(".node")
+            .data(nodes, d => d.id);
+
+        node.exit().transition().duration(300).attr("r", 0).remove();
+
+        const nodeEnter = node.enter().append("g")
+            .attr("class", "node")
+            .call(d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended));
+
+        nodeEnter.append("circle")
+            .attr("r", 0)
+            .attr("fill", d => getNodeColor(d.type))
+            .transition().duration(300).attr("r", 20);
+
+        nodeEnter.append("text")
+            .attr("dy", 30)
+            .attr("text-anchor", "middle")
+            .text(d => d.name);
+
+        const nodeMerge = nodeEnter.merge(node);
+
+        nodeMerge.on("click", (event, d) => {
+            event.stopPropagation();
+            updateDetails(d);
+            updateSidebarFromNode(d);
+            centerNode(d);
+            if (!d.expanded) expandNode(d);
+        });
+        
+        nodeMerge.on("contextmenu", (event, d) => {
+            event.preventDefault();
+            collapseNode(d);
+        });
+
+        simulation.nodes(nodes).on("tick", ticked);
+        simulation.force("link").links(links);
+        simulation.alpha(1).restart();
+
+        function ticked() {
+            linkMerge
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+
+            nodeMerge
+                .attr("transform", d => `translate(${d.x},${d.y})`);
+        }
+    }
+
+    function dragstarted(event, d) {
+        if (!event.active) simulation.alphaTarget(0.3).restart();
+        d.fx = d.x;
+        d.fy = d.y;
+    }
+
+    function dragged(event, d) {
+        d.fx = event.x;
+        d.fy = event.y;
+    }
+
+    function dragended(event, d) {
+        if (!event.active) simulation.alphaTarget(0);
+        d.fx = null;
+        d.fy = null;
+    }
+
+    // --- End D3 Logic ---
+
+    function updateSidebarFromNode(node) {
+        const path = [];
+        let curr = node;
+        while (curr) {
+            path.unshift(curr.name);
+            curr = curr.parent;
+        }
+        updateSidebar(path);
+    }
+
     function updateSidebar(path) {
-        if (!sidebar) return;
-        sidebar.innerHTML = '';
+        if (!sidebarNav) return;
+        sidebarNav.innerHTML = '';
 
         const title = document.createElement('div');
         title.className = 'sidebar-title';
         title.textContent = 'Navigation';
-        sidebar.appendChild(title);
+        sidebarNav.appendChild(title);
 
         path.forEach((segment, index) => {
             const btn = document.createElement('button');
@@ -96,15 +439,36 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.title = segment; // Tooltip for full name
             
             btn.onclick = () => {
-                // Find element with this path
-                const targetPathStr = JSON.stringify(path.slice(0, index + 1));
-                const target = document.querySelector(`[data-path='${targetPathStr}']`);
-                if (target) {
-                    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                if (currentView === 'tree') {
+                    // Find element with this path
+                    const targetPathStr = JSON.stringify(path.slice(0, index + 1));
+                    const target = document.querySelector(`[data-path='${targetPathStr}']`);
+                    if (target) {
+                        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                } else {
+                    // Graph view navigation
+                    const targetPath = path.slice(0, index + 1);
+                    const targetNode = nodes.find(n => {
+                        if (n.name !== targetPath[targetPath.length - 1]) return false;
+                        // Check ancestry
+                        let curr = n;
+                        for (let i = targetPath.length - 1; i >= 0; i--) {
+                            if (!curr || curr.name !== targetPath[i]) return false;
+                            curr = curr.parent;
+                        }
+                        return true;
+                    });
+                    
+                    if (targetNode) {
+                        centerNode(targetNode);
+                        updateDetails(targetNode);
+                        updateSidebarFromNode(targetNode);
+                    }
                 }
             };
 
-            sidebar.appendChild(btn);
+            sidebarNav.appendChild(btn);
         });
     }
 
