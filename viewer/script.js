@@ -186,91 +186,54 @@ document.addEventListener('DOMContentLoaded', () => {
 
         } else {
             dashboard.style.display = 'none';
-            vizContainer.style.display = 'block';
-            // sidebarNav.style.display = 'none'; // Always visible
-            // sidebarDetails.style.display = 'block'; // Always visible
-            toggleViewBtn.textContent = 'Switch to Tree View';
-            
-            if (currentData && !isGraphInitialized) {
-                initGraph(currentData);
-                isGraphInitialized = true;
-            }
+                if (!data || typeof data !== 'object') return [];
 
-            // Sync: Center on selected node
-            if (selectedNodePath && nodes.length > 0) {
-                // Find node by path
-                // This is tricky because graph nodes are created dynamically.
-                // We might need to expand the path to find the node.
-                // For now, let's try to find it if it exists.
-                const targetNode = findNodeByPath(selectedNodePath);
-                if (targetNode) {
-                    centerNode(targetNode);
-                    updateDetails(targetNode);
-                    selectedD3Node = targetNode;
-                }
-            }
-        }
-    }
-
-    function findNodeByPath(path) {
-        // Path is array of names/keys.
-        // Root is nodes[0] usually.
-        // We need to traverse or search.
-        // Since nodes have 'data' and 'name', we can try to match.
-        // But graph nodes are flat list.
-        // Best bet: Search nodes for name match of last path segment?
-        // Names might not be unique.
-        // Let's try to match the sequence.
-        
-        const targetName = path[path.length - 1];
-        const candidates = nodes.filter(n => n.name === targetName);
-        
-        for (const node of candidates) {
-            let curr = node;
-            let match = true;
-            for (let i = path.length - 1; i >= 0; i--) {
-                if (!curr) { match = false; break; }
-                // Root name check might be different
-                if (i === 0 && curr.type === 'root') break; // Root match
-                if (curr.name !== path[i]) { match = false; break; }
-                curr = curr.parent;
-            }
-            if (match) return node;
-        }
-        return null;
-    }
-
-
-    function handleFileSelect(event) {
-        const file = event.target.files[0];
-        if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            try {
-                const data = JSON.parse(e.target.result);
-                currentData = data;
-                targetExpandDepth = 0; // Reset depth on new file
-                isTreeInitialized = false;
-                isGraphInitialized = false;
-                
-                if (currentView === 'tree') {
-                    renderDashboard(data);
-                    isTreeInitialized = true;
-                } else {
-                    initGraph(data);
-                    isGraphInitialized = true;
-                }
-            } catch (err) {
-                alert('Error parsing JSON: ' + err.message);
-            }
+                // Preferred format: explicit children arrays in readable format.
         };
         reader.readAsText(file);
     }
 
-    function loadDefaultFile() {
+                // Common leaf nesting
         fetch('../logs/game_analysis.json')
             .then(response => {
+                // Backward-compatible: decode older compact logs (class-name payloads)
+                if (!data.t) {
+                    const compactKeys = ['DefenseNode', 'DrawNode', 'PlacementNode', 'OffenseTurnNode', 'ActionNode'];
+                    for (const k of compactKeys) {
+                        if (!Object.prototype.hasOwnProperty.call(data, k)) continue;
+                        const payload = data[k];
+
+                        if (k === 'DefenseNode') {
+                            const parts = typeof payload === 'string' ? payload.split(',') : payload;
+                            data.t = 'DefenseNode';
+                            data.round = Number(parts[0]);
+                            data.turn = parts[1];
+                            data.tileBag = parts[2];
+                        } else if (k === 'DrawNode') {
+                            const parts = typeof payload === 'string' ? payload.split(',') : payload;
+                            data.t = 'DrawNode';
+                            data.drawKey = parts[0];
+                            data.drawProbability = Number(parts[1]);
+                            data.randomPlacementProbability = Number(parts[2]);
+                        } else if (k === 'PlacementNode') {
+                            data.t = 'PlacementNode';
+                            data.placement = typeof payload === 'string' ? payload : String(payload[0] ?? payload);
+                        } else if (k === 'OffenseTurnNode') {
+                            const parts = typeof payload === 'string' ? payload.split(',') : payload;
+                            data.t = 'OffenseTurnNode';
+                            data.round = Number(parts[0]);
+                            data.turn = parts[1];
+                            data.gold = Number(parts[2]);
+                        } else if (k === 'ActionNode') {
+                            data.t = 'ActionNode';
+                            data.finalGold = typeof payload === 'string' ? Number(payload) : Number(payload[0]);
+                        }
+
+                        delete data[k];
+                        break;
+                    }
+                }
+
                 if (!response.ok) throw new Error('Network response was not ok');
                 return response.json();
             })
@@ -356,12 +319,56 @@ document.addEventListener('DOMContentLoaded', () => {
         const children = [];
         const props = {};
 
+        // Compact tuple decoding: analyzer may store primitive-heavy fields under class-name keys.
+        // Keep nested arrays/objects unchanged, but expand tuples into friendly props.
+        if (typeof data === 'object' && data !== null) {
+            const tupleKeys = ['DefenseNode', 'DrawNode', 'PlacementNode', 'OffenseTurnNode', 'ActionNode'];
+            const tupleKey = tupleKeys.find(k => (typeof data[k] === 'string') || Array.isArray(data[k]));
+
+            if (tupleKey) {
+                const raw = data[tupleKey];
+                const tuple = Array.isArray(raw)
+                    ? raw
+                    : String(raw).split(',').map(s => s.trim());
+
+                if (tupleKey === 'DefenseNode') {
+                    props.round = Number(tuple[0]);
+                    props.turn = tuple[1];
+                    props.tileBag = tuple[2];
+                } else if (tupleKey === 'DrawNode') {
+                    props.drawKey = tuple[0];
+                    props.drawProbability = Number(tuple[1]);
+                    props.randomPlacementProbability = Number(tuple[2]);
+                } else if (tupleKey === 'PlacementNode') {
+                    props.placement = tuple[0];
+                } else if (tupleKey === 'OffenseTurnNode') {
+                    props.round = Number(tuple[0]);
+                    props.turn = tuple[1];
+                    props.gold = Number(tuple[2]);
+                } else if (tupleKey === 'ActionNode') {
+                    props.finalGold = Number(tuple[0]);
+                } else {
+                    props[tupleKey] = tuple;
+                }
+            }
+        }
+
+        if (Object.prototype.hasOwnProperty.call(props, 'units')) {
+            props.units = formatUnits(props.units);
+        }
+
+        if (Object.prototype.hasOwnProperty.call(props, 'unitSpawnSource') && !Object.prototype.hasOwnProperty.call(props, 'unitSourceCounts')) {
+            props.unitSourceCounts = props.unitSpawnSource;
+            delete props.unitSpawnSource;
+        }
+
         if (Array.isArray(data)) {
             data.forEach((item, index) => {
                 children.push({ key: `[${index}]`, value: item });
             });
         } else if (typeof data === 'object' && data !== null) {
             for (const [key, value] of Object.entries(data)) {
+                if (key === 'DefenseNode' || key === 'DrawNode' || key === 'PlacementNode' || key === 'OffenseTurnNode' || key === 'ActionNode') continue;
                 if (typeof value === 'object' && value !== null) {
                     children.push({ key: key, value: value });
                 } else {
@@ -370,6 +377,15 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         return { children, props };
+    }
+
+    function formatUnits(units) {
+        if (!Array.isArray(units)) return units;
+        if (units.every(u => typeof u === 'string')) return units;
+        if (units.every(u => Array.isArray(u) && u.length >= 2)) {
+            return units.map(u => `${u[0]}::${u[1]}`);
+        }
+        return units;
     }
 
     function getNodeColor(type) {
@@ -762,7 +778,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function getBusinessKey(obj) {
         if (obj.round !== undefined && obj.turn !== undefined) return `Round ${obj.round} (${obj.turn})`;
         if (obj.placement) return `Placement: ${obj.placement}`;
-        if (obj.drawCombination) return `Draw: ${obj.drawCombination}`;
+        if (obj.drawKey || obj.drawCombination) return `Draw: ${obj.drawKey ?? obj.drawCombination}`;
         if (obj.combination) return `Comb: ${obj.combination}`;
         return null;
     }
