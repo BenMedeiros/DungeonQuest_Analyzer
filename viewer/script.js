@@ -903,6 +903,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const card = document.createElement('div');
         card.className = 'card';
 
+        const nodeWin = obj && typeof obj === 'object' ? obj.win : null;
+        if (nodeWin === 'D') card.classList.add('win-defense');
+        if (nodeWin === 'O') card.classList.add('win-offense');
+
+        const canOffenseWin = obj && typeof obj === 'object' ? obj.canOffenseWin : null;
+        if (canOffenseWin === true) card.classList.add('cofw-true');
+        if (canOffenseWin === false) card.classList.add('cofw-false');
+
         const isActionNode = obj && typeof obj === 'object' && obj.t === 'ActionNode';
         if (path.length > 0) {
             card.setAttribute('data-path', JSON.stringify(path));
@@ -925,6 +933,20 @@ document.addEventListener('DOMContentLoaded', () => {
             const titleEl = document.createElement('div');
             titleEl.className = 'card-title';
             titleEl.textContent = title;
+
+            if (nodeWin === 'D' || nodeWin === 'O') {
+                const badge = document.createElement('span');
+                badge.className = `win-badge ${nodeWin === 'D' ? 'defense' : 'offense'}`;
+                badge.textContent = nodeWin === 'D' ? 'WIN: Defense' : 'WIN: Offense';
+                titleEl.appendChild(badge);
+            }
+
+            if (canOffenseWin === true || canOffenseWin === false) {
+                const badge = document.createElement('span');
+                badge.className = `cofw-badge ${canOffenseWin ? 'yes' : 'no'}`;
+                badge.textContent = canOffenseWin ? 'Offense can win' : 'Offense cannot win';
+                titleEl.appendChild(badge);
+            }
             card.appendChild(titleEl);
         }
 

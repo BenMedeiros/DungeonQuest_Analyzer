@@ -144,12 +144,14 @@ function uniquePermutations(tiles, targetLength) {
 }
 
 class DefenseNode {
-    constructor({ round, tileBag, parent = null }) {
+    constructor({ round, tileBag, parent = null, win = null }) {
         this.round = round;
         this.turn = playerEnum.DEFENSE;
         // Tile bag at the START of this defense round.
         this.tileBag = tileBag;
         this.potentialDraws = [];
+        this.win = win;
+        this.canOffenseWin = null;
         this.parent = parent;
     }
 
@@ -217,7 +219,9 @@ class DefenseNode {
             round: this.round,
             turn: this.turn,
             tileBag: this.tileBag,
-            potentialDraws: this.potentialDraws
+            potentialDraws: this.potentialDraws,
+            win: this.win,
+            canOffenseWin: this.canOffenseWin
         };
     }
 }
@@ -228,6 +232,7 @@ class DrawNode {
         this.drawProbability = drawProbability;
         this.randomPlacementProbability = randomPlacementProbability;
         this.placementPermutations = [];
+        this.canOffenseWin = null;
         this.parent = parent;
     }
 
@@ -237,7 +242,8 @@ class DrawNode {
             drawKey: this.drawKey,
             drawProbability: this.drawProbability,
             randomPlacementProbability: this.randomPlacementProbability,
-            placementPermutations: this.placementPermutations
+            placementPermutations: this.placementPermutations,
+            canOffenseWin: this.canOffenseWin
         };
     }
 
@@ -250,6 +256,7 @@ class PlacementNode {
     constructor({ placement, parent }) {
         this.placement = placement;
         this.nextRound = null;
+        this.canOffenseWin = null;
         this.parent = parent;
     }
 
@@ -257,7 +264,8 @@ class PlacementNode {
         return {
             t: 'PlacementNode',
             placement: this.placement,
-            nextRound: this.nextRound
+            nextRound: this.nextRound,
+            canOffenseWin: this.canOffenseWin
         };
     }
 }
@@ -272,6 +280,7 @@ class OffenseTurnNode {
         // Cached spawn source counts for this offense turn.
         this.unitSpawnSourceCounts = unitSpawnSourceCounts;
         this.turnActions = [];
+        this.canOffenseWin = null;
         this.parent = parent;
     }
 
@@ -397,7 +406,8 @@ class OffenseTurnNode {
             gold: this.gold,
             units: encodeUnits(this.units),
             unitSourceCounts: this.unitSpawnSourceCounts,
-            turnActions: this.turnActions
+            turnActions: this.turnActions,
+            canOffenseWin: this.canOffenseWin
         };
     }
 }
@@ -409,6 +419,7 @@ class ActionNode {
         this.units = units;
         this.nextRound = nextRound;
         this.win = win;
+        this.canOffenseWin = null;
         this.parent = parent;
     }
 
@@ -419,8 +430,144 @@ class ActionNode {
             win: this.win,
             actions: this.actions,
             units: encodeUnits(this.units),
-            nextRound: this.nextRound
+            nextRound: this.nextRound,
+            canOffenseWin: this.canOffenseWin
         };
+    }
+}
+
+function annotateCanOffenseWin(root) {
+    const memo = new WeakMap();
+
+    function hasOwn(obj, key) {
+        return Object.prototype.hasOwnProperty.call(obj, key);
+    }
+
+    function visit(node) {
+        if (!node || typeof node !== 'object') return false;
+
+        // Arrays can show up if we accidentally recurse into a list directly.
+        // Treat as "any child is true".
+        if (Array.isArray(node)) {
+            return node.some(visit);
+        }
+        if (memo.has(node)) return memo.get(node);
+
+        let result = false;
+
+        if (node instanceof ActionNode) {
+            // If there is already a computed value (e.g., from a previous pass), keep it.
+            // This avoids leaving stale `null` values when we reuse nodes.
+            if (typeof node.canOffenseWin === 'boolean') {
+                result = node.canOffenseWin;
+            } else {
+                result = node.win === playerEnum.OFFENSE || visit(node.nextRound);
+                node.canOffenseWin = result;
+            }
+        } else if (node instanceof OffenseTurnNode) {
+            if (typeof node.canOffenseWin === 'boolean') {
+                result = node.canOffenseWin;
+            } else {
+                result = Array.isArray(node.turnActions) && node.turnActions.some(a => visit(a));
+                node.canOffenseWin = result;
+            }
+        } else if (node instanceof PlacementNode) {
+            if (typeof node.canOffenseWin === 'boolean') {
+                result = node.canOffenseWin;
+            } else {
+                result = visit(node.nextRound);
+                node.canOffenseWin = result;
+            }
+        } else if (node instanceof DrawNode) {
+            if (typeof node.canOffenseWin === 'boolean') {
+                result = node.canOffenseWin;
+            } else {
+                result = Array.isArray(node.placementPermutations) && node.placementPermutations.some(p => visit(p));
+                node.canOffenseWin = result;
+            }
+        } else if (node instanceof DefenseNode) {
+            if (node.win === playerEnum.DEFENSE) {
+                // Terminal defense-win node: offense cannot win from here.
+                result = false;
+                node.canOffenseWin = result;
+            } else if (typeof node.canOffenseWin === 'boolean') {
+                result = node.canOffenseWin;
+            } else {
+                result = Array.isArray(node.potentialDraws) && node.potentialDraws.some(d => visit(d));
+                node.canOffenseWin = result;
+            }
+        } else {
+            // Plain objects can still appear (e.g., if we ever deserialize). Walk known child props if present.
+            if (node.t === 'ActionNode') {
+                result = node.win === playerEnum.OFFENSE || visit(node.nextRound);
+                node.canOffenseWin = result;
+            } else if (node.t === 'OffenseTurnNode') {
+                result = Array.isArray(node.turnActions) && node.turnActions.some(visit);
+                node.canOffenseWin = result;
+            } else if (node.t === 'PlacementNode') {
+                result = visit(node.nextRound);
+                node.canOffenseWin = result;
+            } else if (node.t === 'DrawNode') {
+                result = Array.isArray(node.placementPermutations) && node.placementPermutations.some(visit);
+                node.canOffenseWin = result;
+            } else if (node.t === 'DefenseNode') {
+                if (node.win === playerEnum.DEFENSE) {
+                    result = false;
+                } else {
+                    result = Array.isArray(node.potentialDraws) && node.potentialDraws.some(visit);
+                }
+                node.canOffenseWin = result;
+            } else {
+                result = visit(node.nextRound)
+                    || (Array.isArray(node.turnActions) && node.turnActions.some(visit))
+                    || (Array.isArray(node.placementPermutations) && node.placementPermutations.some(visit))
+                    || (Array.isArray(node.potentialDraws) && node.potentialDraws.some(visit));
+
+                if (hasOwn(node, 'canOffenseWin')) node.canOffenseWin = result;
+            }
+        }
+
+        // Defensive: any node that declares the field should never remain null.
+        if (hasOwn(node, 'canOffenseWin') && (node.canOffenseWin === null || node.canOffenseWin === undefined)) {
+            node.canOffenseWin = result;
+        }
+
+        memo.set(node, result);
+        return result;
+    }
+
+    visit(root);
+    return root;
+}
+
+function fillMissingCanOffenseWin(node) {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+        for (const item of node) fillMissingCanOffenseWin(item);
+        return;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(node, 'canOffenseWin') && node.canOffenseWin == null) {
+        node.canOffenseWin = false;
+    }
+
+    // Walk all known child shapes (instances and serialized/plain objects).
+    if (node instanceof ActionNode || node.t === 'ActionNode') {
+        fillMissingCanOffenseWin(node.nextRound);
+    } else if (node instanceof PlacementNode || node.t === 'PlacementNode') {
+        fillMissingCanOffenseWin(node.nextRound);
+    } else if (node instanceof OffenseTurnNode || node.t === 'OffenseTurnNode') {
+        if (Array.isArray(node.turnActions)) fillMissingCanOffenseWin(node.turnActions);
+    } else if (node instanceof DrawNode || node.t === 'DrawNode') {
+        if (Array.isArray(node.placementPermutations)) fillMissingCanOffenseWin(node.placementPermutations);
+    } else if (node instanceof DefenseNode || node.t === 'DefenseNode') {
+        if (Array.isArray(node.potentialDraws)) fillMissingCanOffenseWin(node.potentialDraws);
+    } else {
+        // Fallback: also try common child props if present.
+        if (node.nextRound) fillMissingCanOffenseWin(node.nextRound);
+        if (Array.isArray(node.turnActions)) fillMissingCanOffenseWin(node.turnActions);
+        if (Array.isArray(node.placementPermutations)) fillMissingCanOffenseWin(node.placementPermutations);
+        if (Array.isArray(node.potentialDraws)) fillMissingCanOffenseWin(node.potentialDraws);
     }
 }
 
@@ -452,7 +599,6 @@ if (fs.existsSync(logsDir)) {
 // Global settings
 const NUM_OF_PATHS = 2; //x
 const STARTING_DEPTH = 2; //y start
-const MAX_ROUNDS = 4;
 
 
 
@@ -512,10 +658,6 @@ function getUnitSpawnSourceCountsAt(node) {
 
 // Recursive function to build game tree
 function buildGameTree(tileBag, round, offenseGold = 4, units = [], unitSpawnSourceCounts = initialUnitSpawnSourceCounts) {
-    if (round > MAX_ROUNDS) {
-        return null;
-    }
-
     console.log(`\nProcessing round ${round}...`);
 
     // First round draws NUM_OF_PATHS * STARTING_DEPTH, subsequent rounds draw NUM_OF_PATHS
@@ -523,6 +665,16 @@ function buildGameTree(tileBag, round, offenseGold = 4, units = [], unitSpawnSou
     // Board max Y index for the board *after* this defense placement.
     // Round 1 placement fills STARTING_DEPTH rows; each subsequent defense adds one row.
     const maxYAfterPlacement = (STARTING_DEPTH - 1) + (round - 1);
+
+    const totalTilesInBag = Object.values(tileBag).reduce((sum, count) => sum + count, 0);
+    if (totalTilesInBag < numTilesToDraw) {
+        console.log(`  Not enough tiles left for a full draw (${totalTilesInBag} < ${numTilesToDraw}). Defense wins.`);
+        return new DefenseNode({
+            round,
+            tileBag: DefenseNode.tileBagKey(tileBag),
+            win: playerEnum.DEFENSE
+        });
+    }
 
     const drawCombinations = DefenseNode.enumerateDrawCombinations(tileBag, numTilesToDraw);
 
@@ -617,8 +769,12 @@ function printGameAnalysis(gameAnalysis, indent = '') {
 
 
 console.log('DungeonQuest Analyzer');
-console.log(`Paths: ${NUM_OF_PATHS}, Starting Depth: ${STARTING_DEPTH}, Max Rounds: ${MAX_ROUNDS}`);
+console.log(`Paths: ${NUM_OF_PATHS}, Starting Depth: ${STARTING_DEPTH}`);
 
 const gameAnalysis = buildGameTree(initialTileBag, 1);
+
+annotateCanOffenseWin(gameAnalysis);
+
+fillMissingCanOffenseWin(gameAnalysis);
 
 printGameAnalysis(gameAnalysis);

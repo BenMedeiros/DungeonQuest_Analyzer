@@ -175,6 +175,16 @@ body {
     transition: box-shadow 0.2s;
 }
 
+.card.win-defense {
+    border-color: #2e7d32;
+    box-shadow: 0 0 0 2px rgba(46, 125, 50, 0.12);
+}
+
+.card.win-offense {
+    border-color: #c62828;
+    box-shadow: 0 0 0 2px rgba(198, 40, 40, 0.12);
+}
+
 .card.selected {
     box-shadow: 0 0 0 2px #3498db;
 }
@@ -186,6 +196,54 @@ body {
     margin-bottom: 0.5rem; /* Reduced margin */
     border-bottom: 2px solid #eee;
     padding-bottom: 0.25rem; /* Reduced padding */
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.win-badge {
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    letter-spacing: 0.02em;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+
+.win-badge.defense {
+    color: #1b5e20;
+    background: #e8f5e9;
+    border-color: rgba(27, 94, 32, 0.25);
+}
+
+.win-badge.offense {
+    color: #b71c1c;
+    background: #ffebee;
+    border-color: rgba(183, 28, 28, 0.25);
+}
+
+.cofw-badge {
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    letter-spacing: 0.02em;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+
+.cofw-badge.yes {
+    color: #0d47a1;
+    background: #e3f2fd;
+    border-color: rgba(13, 71, 161, 0.25);
+}
+
+.cofw-badge.no {
+    color: #424242;
+    background: #f5f5f5;
+    border-color: rgba(66, 66, 66, 0.25);
 }
 
 .field-row {
