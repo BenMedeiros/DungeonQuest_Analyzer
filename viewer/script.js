@@ -186,18 +186,59 @@ document.addEventListener('DOMContentLoaded', () => {
 
         } else {
             dashboard.style.display = 'none';
-                if (!data || typeof data !== 'object') return [];
+            vizContainer.style.display = 'block';
+            toggleViewBtn.textContent = 'Switch to Tree View';
 
-                // Preferred format: explicit children arrays in readable format.
+            if (currentData && !isGraphInitialized) {
+                initGraph(currentData);
+                isGraphInitialized = true;
+            }
+
+            // Sync: center on selected D3 node if any
+            if (selectedD3Node) {
+                setTimeout(() => {
+                    centerNode(selectedD3Node);
+                }, 50);
+            }
+        }
+    }
+
+    function handleFileSelect(event) {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const data = JSON.parse(String(e.target.result));
+                currentData = data;
+                targetExpandDepth = 0;
+                isTreeInitialized = false;
+                isGraphInitialized = false;
+
+                if (currentView === 'tree') {
+                    renderDashboard(currentData);
+                    isTreeInitialized = true;
+                } else {
+                    initGraph(currentData);
+                    isGraphInitialized = true;
+                }
+            } catch (err) {
+                alert('Could not parse JSON file.\nError: ' + err.message);
+            }
         };
         reader.readAsText(file);
     }
 
-                // Common leaf nesting
+    function loadDefaultFile() {
         fetch('../logs/game_analysis.json')
             .then(response => {
+                if (!response.ok) throw new Error('Network response was not ok');
+                return response.json();
+            })
+            .then(data => {
                 // Backward-compatible: decode older compact logs (class-name payloads)
-                if (!data.t) {
+                if (data && typeof data === 'object' && !data.t) {
                     const compactKeys = ['DefenseNode', 'DrawNode', 'PlacementNode', 'OffenseTurnNode', 'ActionNode'];
                     for (const k of compactKeys) {
                         if (!Object.prototype.hasOwnProperty.call(data, k)) continue;
@@ -234,20 +275,16 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 }
 
-                if (!response.ok) throw new Error('Network response was not ok');
-                return response.json();
-            })
-            .then(data => {
                 currentData = data;
                 targetExpandDepth = 0;
                 isTreeInitialized = false;
                 isGraphInitialized = false;
 
                 if (currentView === 'tree') {
-                    renderDashboard(data);
+                    renderDashboard(currentData);
                     isTreeInitialized = true;
                 } else {
-                    initGraph(data);
+                    initGraph(currentData);
                     isGraphInitialized = true;
                 }
             })
@@ -783,11 +820,39 @@ document.addEventListener('DOMContentLoaded', () => {
         return null;
     }
 
+    function formatAction(action) {
+        if (!action || typeof action !== 'object') return String(action);
+        if (action.type === 'spawn') {
+            const unitType = action.unitType ?? '?';
+            const location = action.location ?? '?';
+            return `spawn ${unitType}@${location}`;
+        }
+        if (action.type === 'move') {
+            const unitIndex = action.unitIndex ?? '?';
+            const from = action.from ?? '?';
+            const to = action.to ?? '?';
+            return `move #${unitIndex} ${from}→${to}`;
+        }
+        return action.type ? String(action.type) : JSON.stringify(action);
+    }
+
+    function formatActions(actions) {
+        if (!Array.isArray(actions)) return actions;
+        return actions.map(formatAction);
+    }
+
     function renderValue(key, value, depth, path) {
         if (value === null || value === undefined) {
             const span = document.createElement('span');
             span.className = 'field-value';
             span.textContent = 'null';
+            return span;
+        }
+
+        if (key === 'unitSourceCounts' && Array.isArray(value) && value.every(v => typeof v === 'number')) {
+            const span = document.createElement('span');
+            span.className = 'field-value';
+            span.textContent = value.join(',');
             return span;
         }
 
@@ -837,6 +902,8 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderObject(obj, title = null, expanded = false, depth = 0, path = []) {
         const card = document.createElement('div');
         card.className = 'card';
+
+        const isActionNode = obj && typeof obj === 'object' && obj.t === 'ActionNode';
         if (path.length > 0) {
             card.setAttribute('data-path', JSON.stringify(path));
             // observer.observe(card); // Removed observer
@@ -879,8 +946,17 @@ document.addEventListener('DOMContentLoaded', () => {
             const label = document.createElement('div');
             label.className = 'field-label';
             label.textContent = key;
-            
-            const valEl = renderValue(key, obj[key], depth, path);
+
+            let valEl;
+            if (isActionNode && key === 'actions' && Array.isArray(obj[key]) && obj[key].length > 0) {
+                // Render ActionNode actions as compact strings (stable columns)
+                valEl = renderTable(formatActions(obj[key]), depth + 1, [...path, key]);
+            } else if (isActionNode && key === 'units' && Array.isArray(obj[key]) && obj[key].length > 0) {
+                // Inline table for compact ActionNode units
+                valEl = renderTable(obj[key], depth + 1, [...path, key]);
+            } else {
+                valEl = renderValue(key, obj[key], depth, path);
+            }
             
             row.appendChild(label);
             row.appendChild(valEl);
@@ -898,13 +974,9 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderTable(arr, depth, path) {
         if (!arr.length) return document.createTextNode('Empty Array');
 
-        const processedArr = arr.map(item => {
-            if (item && typeof item === 'object' && item.nextRound && typeof item.nextRound === 'object') {
-                const { nextRound, ...rest } = item;
-                return { ...rest, ...nextRound };
-            }
-            return item;
-        });
+        // Do not flatten `nextRound` into the parent row.
+        // It overwrites fields like `t`, `round`, and `turn` (e.g., ActionNode becomes DefenseNode).
+        const processedArr = arr;
 
         const allKeys = new Set();
         processedArr.forEach(item => {
@@ -995,6 +1067,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 primitiveCols.forEach(col => {
                     const td = document.createElement('td');
                     const val = item[col];
+
+                    if (item.t === 'ActionNode' && col === 'actions' && Array.isArray(val) && val.length > 0) {
+                        // Render ActionNode actions as compact strings
+                        td.appendChild(renderTable(formatActions(val), depth + 1, [...itemPath, col]));
+                        tr.appendChild(td);
+                        return;
+                    }
+
+                    if (item.t === 'ActionNode' && col === 'units' && Array.isArray(val) && val.length > 0) {
+                        // Inline tables for ActionNode units inside parent tables
+                        td.appendChild(renderTable(val, depth + 1, [...itemPath, col]));
+                        tr.appendChild(td);
+                        return;
+                    }
                     
                     if (col === 'actions' && Array.isArray(val) && val.every(v => typeof v === 'string')) {
                         val.forEach(action => {

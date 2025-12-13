@@ -340,7 +340,7 @@ class OffenseTurnNode {
                 }
             }
 
-            const MOVE_COST = 2;
+            const MOVE_COST = 1;
             if (currentGold < MOVE_COST) return;
             if (currentUnits.length === 0) return;
 
