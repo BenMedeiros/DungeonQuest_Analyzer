@@ -152,6 +152,7 @@ class DefenseNode {
         this.potentialDraws = [];
         this.win = win;
         this.canOffenseWin = null;
+        this.numOutcomes = null;
         this.parent = parent;
     }
 
@@ -221,7 +222,8 @@ class DefenseNode {
             tileBag: this.tileBag,
             potentialDraws: this.potentialDraws,
             win: this.win,
-            canOffenseWin: this.canOffenseWin
+            canOffenseWin: this.canOffenseWin,
+            numOutcomes: this.numOutcomes
         };
     }
 }
@@ -233,6 +235,7 @@ class DrawNode {
         this.randomPlacementProbability = randomPlacementProbability;
         this.placementPermutations = [];
         this.canOffenseWin = null;
+        this.numOutcomes = null;
         this.parent = parent;
     }
 
@@ -243,7 +246,8 @@ class DrawNode {
             drawProbability: this.drawProbability,
             randomPlacementProbability: this.randomPlacementProbability,
             placementPermutations: this.placementPermutations,
-            canOffenseWin: this.canOffenseWin
+            canOffenseWin: this.canOffenseWin,
+            numOutcomes: this.numOutcomes
         };
     }
 
@@ -257,6 +261,7 @@ class PlacementNode {
         this.placement = placement;
         this.nextRound = null;
         this.canOffenseWin = null;
+        this.numOutcomes = null;
         this.parent = parent;
     }
 
@@ -265,7 +270,8 @@ class PlacementNode {
             t: 'PlacementNode',
             placement: this.placement,
             nextRound: this.nextRound,
-            canOffenseWin: this.canOffenseWin
+            canOffenseWin: this.canOffenseWin,
+            numOutcomes: this.numOutcomes
         };
     }
 }
@@ -281,6 +287,7 @@ class OffenseTurnNode {
         this.unitSpawnSourceCounts = unitSpawnSourceCounts;
         this.turnActions = [];
         this.canOffenseWin = null;
+        this.numOutcomes = null;
         this.parent = parent;
     }
 
@@ -407,7 +414,8 @@ class OffenseTurnNode {
             units: encodeUnits(this.units),
             unitSourceCounts: this.unitSpawnSourceCounts,
             turnActions: this.turnActions,
-            canOffenseWin: this.canOffenseWin
+            canOffenseWin: this.canOffenseWin,
+            numOutcomes: this.numOutcomes
         };
     }
 }
@@ -420,6 +428,7 @@ class ActionNode {
         this.nextRound = nextRound;
         this.win = win;
         this.canOffenseWin = null;
+        this.numOutcomes = null;
         this.parent = parent;
     }
 
@@ -431,113 +440,161 @@ class ActionNode {
             actions: this.actions,
             units: encodeUnits(this.units),
             nextRound: this.nextRound,
-            canOffenseWin: this.canOffenseWin
+            canOffenseWin: this.canOffenseWin,
+            numOutcomes: this.numOutcomes
         };
     }
 }
 
-function annotateCanOffenseWin(root) {
+function annotatePostBuildStats(root) {
     const memo = new WeakMap();
 
     function hasOwn(obj, key) {
         return Object.prototype.hasOwnProperty.call(obj, key);
     }
 
-    function visit(node) {
-        if (!node || typeof node !== 'object') return false;
+    function childList(node, prop) {
+        if (!node) return [];
+        const v = node[prop];
+        return Array.isArray(v) ? v : [];
+    }
 
-        // Arrays can show up if we accidentally recurse into a list directly.
-        // Treat as "any child is true".
-        if (Array.isArray(node)) {
-            return node.some(visit);
+    function setIfDeclared(node, key, value) {
+        if (!node || typeof node !== 'object') return;
+        if (node instanceof DefenseNode || node instanceof DrawNode || node instanceof PlacementNode || node instanceof OffenseTurnNode || node instanceof ActionNode) {
+            node[key] = value;
+            return;
         }
+        if (hasOwn(node, key)) node[key] = value;
+    }
+
+    function getWin(node) {
+        if (!node || typeof node !== 'object') return null;
+        return hasOwn(node, 'win') ? node.win : null;
+    }
+
+    function getType(node) {
+        if (!node || typeof node !== 'object') return null;
+        if (hasOwn(node, 't')) return node.t;
+        if (node instanceof DefenseNode) return 'DefenseNode';
+        if (node instanceof DrawNode) return 'DrawNode';
+        if (node instanceof PlacementNode) return 'PlacementNode';
+        if (node instanceof OffenseTurnNode) return 'OffenseTurnNode';
+        if (node instanceof ActionNode) return 'ActionNode';
+        return null;
+    }
+
+    // Returns { canOffenseWin: boolean, numOutcomes: number }
+    function visit(node) {
+        if (!node || typeof node !== 'object') return { canOffenseWin: false, numOutcomes: 0 };
+
+        // If we ever recurse into a list directly, aggregate across the list.
+        if (Array.isArray(node)) {
+            let anyWin = false;
+            let total = 0;
+            for (const item of node) {
+                const r = visit(item);
+                anyWin = anyWin || r.canOffenseWin;
+                total += r.numOutcomes;
+            }
+            return { canOffenseWin: anyWin, numOutcomes: total };
+        }
+
         if (memo.has(node)) return memo.get(node);
 
-        let result = false;
+        const type = getType(node);
+        let canOffenseWin = false;
+        let numOutcomes = 0;
 
-        if (node instanceof ActionNode) {
-            // If there is already a computed value (e.g., from a previous pass), keep it.
-            // This avoids leaving stale `null` values when we reuse nodes.
-            if (typeof node.canOffenseWin === 'boolean') {
-                result = node.canOffenseWin;
+        if (type === 'ActionNode') {
+            const win = getWin(node);
+            if (win === playerEnum.OFFENSE) {
+                canOffenseWin = true;
+                numOutcomes = 1;
             } else {
-                result = node.win === playerEnum.OFFENSE || visit(node.nextRound);
-                node.canOffenseWin = result;
+                const child = visit(node.nextRound);
+                canOffenseWin = child.canOffenseWin;
+                numOutcomes = child.numOutcomes;
             }
-        } else if (node instanceof OffenseTurnNode) {
-            if (typeof node.canOffenseWin === 'boolean') {
-                result = node.canOffenseWin;
-            } else {
-                result = Array.isArray(node.turnActions) && node.turnActions.some(a => visit(a));
-                node.canOffenseWin = result;
+        } else if (type === 'OffenseTurnNode') {
+            const children = childList(node, 'turnActions');
+            let any = false;
+            let total = 0;
+            for (const childNode of children) {
+                const r = visit(childNode);
+                any = any || r.canOffenseWin;
+                total += r.numOutcomes;
             }
-        } else if (node instanceof PlacementNode) {
-            if (typeof node.canOffenseWin === 'boolean') {
-                result = node.canOffenseWin;
-            } else {
-                result = visit(node.nextRound);
-                node.canOffenseWin = result;
+            canOffenseWin = any;
+            numOutcomes = total;
+        } else if (type === 'PlacementNode') {
+            const child = visit(node.nextRound);
+            canOffenseWin = child.canOffenseWin;
+            numOutcomes = child.numOutcomes;
+        } else if (type === 'DrawNode') {
+            const children = childList(node, 'placementPermutations');
+            let any = false;
+            let total = 0;
+            for (const childNode of children) {
+                const r = visit(childNode);
+                any = any || r.canOffenseWin;
+                total += r.numOutcomes;
             }
-        } else if (node instanceof DrawNode) {
-            if (typeof node.canOffenseWin === 'boolean') {
-                result = node.canOffenseWin;
+            canOffenseWin = any;
+            numOutcomes = total;
+        } else if (type === 'DefenseNode') {
+            const win = getWin(node);
+            if (win === playerEnum.DEFENSE) {
+                // Terminal defense-win node.
+                canOffenseWin = false;
+                numOutcomes = 1;
             } else {
-                result = Array.isArray(node.placementPermutations) && node.placementPermutations.some(p => visit(p));
-                node.canOffenseWin = result;
-            }
-        } else if (node instanceof DefenseNode) {
-            if (node.win === playerEnum.DEFENSE) {
-                // Terminal defense-win node: offense cannot win from here.
-                result = false;
-                node.canOffenseWin = result;
-            } else if (typeof node.canOffenseWin === 'boolean') {
-                result = node.canOffenseWin;
-            } else {
-                result = Array.isArray(node.potentialDraws) && node.potentialDraws.some(d => visit(d));
-                node.canOffenseWin = result;
+                const children = childList(node, 'potentialDraws');
+                let any = false;
+                let total = 0;
+                for (const childNode of children) {
+                    const r = visit(childNode);
+                    any = any || r.canOffenseWin;
+                    total += r.numOutcomes;
+                }
+                canOffenseWin = any;
+                numOutcomes = total;
             }
         } else {
-            // Plain objects can still appear (e.g., if we ever deserialize). Walk known child props if present.
-            if (node.t === 'ActionNode') {
-                result = node.win === playerEnum.OFFENSE || visit(node.nextRound);
-                node.canOffenseWin = result;
-            } else if (node.t === 'OffenseTurnNode') {
-                result = Array.isArray(node.turnActions) && node.turnActions.some(visit);
-                node.canOffenseWin = result;
-            } else if (node.t === 'PlacementNode') {
-                result = visit(node.nextRound);
-                node.canOffenseWin = result;
-            } else if (node.t === 'DrawNode') {
-                result = Array.isArray(node.placementPermutations) && node.placementPermutations.some(visit);
-                node.canOffenseWin = result;
-            } else if (node.t === 'DefenseNode') {
-                if (node.win === playerEnum.DEFENSE) {
-                    result = false;
-                } else {
-                    result = Array.isArray(node.potentialDraws) && node.potentialDraws.some(visit);
-                }
-                node.canOffenseWin = result;
+            // Plain objects: best-effort traversal.
+            const win = getWin(node);
+            if (win === playerEnum.OFFENSE && (type === 'ActionNode' || hasOwn(node, 'actions'))) {
+                canOffenseWin = true;
+                numOutcomes = 1;
+            } else if (win === playerEnum.DEFENSE && type === 'DefenseNode') {
+                canOffenseWin = false;
+                numOutcomes = 1;
             } else {
-                result = visit(node.nextRound)
-                    || (Array.isArray(node.turnActions) && node.turnActions.some(visit))
-                    || (Array.isArray(node.placementPermutations) && node.placementPermutations.some(visit))
-                    || (Array.isArray(node.potentialDraws) && node.potentialDraws.some(visit));
+                const next = visit(node.nextRound);
+                const actions = visit(childList(node, 'turnActions'));
+                const placements = visit(childList(node, 'placementPermutations'));
+                const draws = visit(childList(node, 'potentialDraws'));
 
-                if (hasOwn(node, 'canOffenseWin')) node.canOffenseWin = result;
+                canOffenseWin = next.canOffenseWin || actions.canOffenseWin || placements.canOffenseWin || draws.canOffenseWin;
+                numOutcomes = next.numOutcomes + actions.numOutcomes + placements.numOutcomes + draws.numOutcomes;
             }
         }
 
-        // Defensive: any node that declares the field should never remain null.
-        if (hasOwn(node, 'canOffenseWin') && (node.canOffenseWin === null || node.canOffenseWin === undefined)) {
-            node.canOffenseWin = result;
-        }
+        setIfDeclared(node, 'canOffenseWin', Boolean(canOffenseWin));
+        setIfDeclared(node, 'numOutcomes', Number.isFinite(numOutcomes) ? numOutcomes : 0);
 
+        const result = { canOffenseWin: Boolean(canOffenseWin), numOutcomes: Number.isFinite(numOutcomes) ? numOutcomes : 0 };
         memo.set(node, result);
         return result;
     }
 
     visit(root);
     return root;
+}
+
+function annotateCanOffenseWin(root) {
+    // Back-compat entrypoint: compute `canOffenseWin` (and related post-build stats) from scratch.
+    return annotatePostBuildStats(root);
 }
 
 function fillMissingCanOffenseWin(node) {
@@ -619,7 +676,7 @@ const TILE_TYPE_ORDER = Object.values(tileBagEnum).sort();
 
 // Initial game state
 const initialTileBag = {
-    [tileBagEnum.BLANK]: 4,
+    [tileBagEnum.BLANK]: 6,
     [tileBagEnum.SPIKE_TRAP]: 2,
     [tileBagEnum.CAGE_TRAP]: 0,
     [tileBagEnum.OIL_TRAP]: 0,
