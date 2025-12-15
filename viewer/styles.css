@@ -1,3 +1,58 @@
+/* Node Detail Table Improvements */
+.node-detail-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    margin-bottom: 0.5rem;
+    font-size: 0.95rem;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    table-layout: auto;
+}
+.node-detail-table th, .node-detail-table td {
+    padding: 0.4rem 0.7rem;
+    border-bottom: 1px solid #e0e0e0;
+    text-align: left;
+}
+.node-detail-table th {
+    background: #f8f9fa;
+    font-weight: 600;
+    color: #2c3e50;
+    border-bottom: 2px solid #dee2e6;
+}
+.node-detail-table tr:last-child td {
+    border-bottom: none;
+}
+.sidebar-collapsed {
+    width: 36px !important;
+    min-width: 36px !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    transition: width 0.2s;
+}
+.sidebar-toggle-btn {
+    position: absolute;
+    top: 8px;
+    right: -16px;
+    width: 32px;
+    height: 32px;
+    background: #e0e0e0;
+    border: 1px solid #ccc;
+    border-radius: 0 6px 6px 0;
+    cursor: pointer;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    color: #555;
+    transition: background 0.2s;
+}
+.sidebar-toggle-btn:hover {
+    background: #d1ecf1;
+}
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     margin: 0;

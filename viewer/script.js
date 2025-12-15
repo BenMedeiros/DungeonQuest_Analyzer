@@ -1,4 +1,13 @@
 document.addEventListener('DOMContentLoaded', () => {
+        const sidebar = document.getElementById('sidebar');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+
+        if (sidebarToggleBtn && sidebar) {
+            sidebarToggleBtn.addEventListener('click', () => {
+                const collapsed = sidebar.classList.toggle('sidebar-collapsed');
+                sidebarToggleBtn.textContent = collapsed ? '❯' : '❮';
+            });
+        }
     const fileInput = document.getElementById('fileInput');
     const loadDefaultBtn = document.getElementById('loadDefaultBtn');
     const dashboard = document.getElementById('dashboard');
@@ -950,9 +959,48 @@ document.addEventListener('DOMContentLoaded', () => {
             card.appendChild(titleEl);
         }
 
+        // Render DefenseNode and OffenseTurnNode as a single-row table for fields
+        if (obj && (obj.t === 'DefenseNode' || obj.t === 'OffenseTurnNode')) {
+            const table = document.createElement('table');
+            table.className = 'node-detail-table';
+            const thead = document.createElement('thead');
+            const trHead = document.createElement('tr');
+            const tbody = document.createElement('tbody');
+            const trBody = document.createElement('tr');
+            // Only show primitive fields (not arrays/objects)
+            for (const [key, value] of Object.entries(obj)) {
+                if (typeof value !== 'object' || value === null) {
+                    const th = document.createElement('th');
+                    th.textContent = key;
+                    trHead.appendChild(th);
+                    const td = document.createElement('td');
+                    td.textContent = value;
+                    trBody.appendChild(td);
+                }
+            }
+            thead.appendChild(trHead);
+            table.appendChild(thead);
+            tbody.appendChild(trBody);
+            table.appendChild(tbody);
+            card.appendChild(table);
+            // Special: for DefenseNode, render potentialDraws as a plain table (no wrapper)
+            if (obj.t === 'DefenseNode' && Array.isArray(obj.potentialDraws) && obj.potentialDraws.length > 0) {
+                const drawsTable = renderTable(obj.potentialDraws, depth + 1, [...path, 'potentialDraws']);
+                card.appendChild(drawsTable);
+            }
+            // Render other complex fields (arrays/objects) below as before, except potentialDraws
+            for (const [key, value] of Object.entries(obj)) {
+                if (key === 'potentialDraws') continue;
+                if (typeof value === 'object' && value !== null) {
+                    const valEl = renderValue(key, value, depth, path);
+                    card.appendChild(valEl);
+                }
+            }
+            return card;
+        }
+        // Default: old label/value block rendering for other node types
         const primitives = [];
         const complex = [];
-
         for (const [key, value] of Object.entries(obj)) {
             if (typeof value === 'object' && value !== null) {
                 complex.push(key);
@@ -960,36 +1008,28 @@ document.addEventListener('DOMContentLoaded', () => {
                 primitives.push(key);
             }
         }
-
         primitives.forEach(key => {
             const row = document.createElement('div');
             row.className = 'field-row';
-            
             const label = document.createElement('div');
             label.className = 'field-label';
             label.textContent = key;
-
             let valEl;
             if (isActionNode && key === 'actions' && Array.isArray(obj[key]) && obj[key].length > 0) {
-                // Render ActionNode actions as compact strings (stable columns)
                 valEl = renderTable(formatActions(obj[key]), depth + 1, [...path, key]);
             } else if (isActionNode && key === 'units' && Array.isArray(obj[key]) && obj[key].length > 0) {
-                // Inline table for compact ActionNode units
                 valEl = renderTable(obj[key], depth + 1, [...path, key]);
             } else {
                 valEl = renderValue(key, obj[key], depth, path);
             }
-            
             row.appendChild(label);
             row.appendChild(valEl);
             card.appendChild(row);
         });
-
         complex.forEach(key => {
             const valEl = renderValue(key, obj[key], depth, path);
             card.appendChild(valEl);
         });
-
         return card;
     }
 
@@ -1137,11 +1177,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         const wrapper = document.createElement('div');
                         wrapper.className = 'detail-field-wrapper';
                         
-                        const label = document.createElement('div');
-                        label.className = 'detail-field-label';
-                        label.textContent = col;
-                        
-                        wrapper.appendChild(label);
+                        // Remove detail-field-label: just show value
                         wrapper.appendChild(renderValue(col, val, depth + 1, [...itemPath, col]));
                         detailContent.appendChild(wrapper);
                     }
