@@ -187,6 +187,12 @@ body {
     font-weight: 500;
 }
 
+.sidebar-center-btn {
+    margin-bottom: 1rem;
+    background-color: #e3f2fd;
+    color: #1565c0;
+}
+
 #sidebar-details {
     font-size: 0.9rem;
 }
@@ -370,6 +376,18 @@ body {
 
 .data-table tr:last-child td {
     border-bottom: none;
+}
+
+.expander-col {
+    width: 30px;
+}
+
+.row-expand-btn {
+    cursor: pointer;
+    border: none;
+    background: none;
+    color: #2980b9;
+    font-weight: bold;
 }
 
 /* Collapsible Styles */

@@ -27,8 +27,226 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentView = 'tree'; // 'tree' or 'graph'
     let isTreeInitialized = false;
     let isGraphInitialized = false;
-    let selectedNodePath = null; // For Tree View sync
-    let selectedD3Node = null;   // For Graph View sync
+    let selectedNodePath = null; // legacy display path (strings)
+    let selectedD3Node = null;   // legacy pointer (graph)
+
+    const state = {
+        // Selector path segments: `k:propName` and `i:index`
+        selectedSelPath: [],
+        // Sidebar breadcrumbs: { label, selLen } where selLen is selector-path prefix length
+        breadcrumbs: [{ label: 'Root', selLen: 0 }],
+        // Shared expansion state (selector-path JSON strings)
+        expandedSelPaths: new Set(),
+    };
+
+    function isNodeObject(obj) {
+        if (!obj || typeof obj !== 'object') return false;
+        if (typeof obj.t === 'string') return true;
+        // Heuristic for older logs / compact decoding
+        return obj.round !== undefined || obj.turn !== undefined || obj.placement !== undefined || obj.drawKey !== undefined || obj.actions !== undefined;
+    }
+
+    function labelForNode(node) {
+        if (!node || typeof node !== 'object') return String(node);
+
+        // Draw node
+        if (node.t === 'DrawNode' || node.drawKey !== undefined || node.drawCombination !== undefined) {
+            const key = node.drawKey ?? node.drawCombination;
+            return `Draw: ${key}`;
+        }
+
+        // Placement node
+        if (node.t === 'PlacementNode' || node.placement !== undefined) {
+            return `Placement: ${String(node.placement)}`;
+        }
+
+        // Offense turn node
+        if (node.t === 'OffenseTurnNode' || (node.turn === 'O' && node.gold !== undefined)) {
+            const r = node.round ?? '?';
+            const g = node.gold ?? '?';
+            return `Offense R${r} Gold ${g}`;
+        }
+
+        // Defense node
+        if (node.t === 'DefenseNode' || (node.turn === 'D' && node.tileBag !== undefined)) {
+            const r = node.round ?? '?';
+            const bag = node.tileBag ?? '?';
+            return `Defense R${r} Bag ${bag}`;
+        }
+
+        // Action node
+        if (node.t === 'ActionNode' || Array.isArray(node.actions)) {
+            const actions = Array.isArray(node.actions) ? node.actions : [];
+            const formatted = formatActions(actions);
+            const text = Array.isArray(formatted) ? formatted.join(', ') : String(formatted);
+            return text ? `Action: ${text}` : 'Action';
+        }
+
+        // Fallback business key
+        const businessKey = getBusinessKey(node);
+        if (businessKey) return businessKey;
+
+        return node.t ? String(node.t) : 'Node';
+    }
+
+    function labelForContainerKey(key) {
+        // Keep this minimal and predictable; prefer leaving raw key if unknown.
+        if (key === 'potentialDraws') return 'Draws';
+        if (key === 'placementPermutations') return 'Placements';
+        if (key === 'turnActions') return 'Actions';
+        return String(key);
+    }
+
+    function shouldCollapseCollectionKey(key) {
+        // These are known collections of node objects; breadcrumbs should show the node label, not `key` + `[index]`.
+        return key === 'potentialDraws' || key === 'placementPermutations' || key === 'turnActions';
+    }
+
+    function computeBreadcrumbsFromSelPath(root, selPath) {
+        const breadcrumbs = [{ label: 'Root', selLen: 0 }];
+        let curr = root;
+
+        const segments = Array.isArray(selPath) ? selPath : [];
+        for (let i = 0; i < segments.length; i++) {
+            const seg = segments[i];
+            const parsed = parseSelSegment(seg);
+
+            if (parsed.type === 'key') {
+                const nextSeg = segments[i + 1];
+                const nextParsed = nextSeg ? parseSelSegment(nextSeg) : null;
+                const container = (curr && typeof curr === 'object') ? curr[parsed.key] : undefined;
+
+                // If this key points to an array and next is an index, collapse key+index into one node label
+                if (Array.isArray(container) && nextParsed && nextParsed.type === 'index') {
+                    const item = container[nextParsed.index];
+                    if ((item && typeof item === 'object') && (isNodeObject(item) || shouldCollapseCollectionKey(parsed.key))) {
+                        breadcrumbs.push({ label: labelForNode(item), selLen: i + 2 });
+                        curr = item;
+                        i++; // consume index segment
+                        continue;
+                    }
+
+                    // Non-node items: show container label then index label
+                    breadcrumbs.push({ label: labelForContainerKey(parsed.key), selLen: i + 1 });
+                    breadcrumbs.push({ label: `[${nextParsed.index}]`, selLen: i + 2 });
+                    curr = item;
+                    i++;
+                    continue;
+                }
+
+                // If key points directly to a node object, show node label (not raw key)
+                // Also treat `nextRound` as a node step even if the heuristics miss it.
+                if ((container && typeof container === 'object') && (isNodeObject(container) || parsed.key === 'nextRound')) {
+                    breadcrumbs.push({ label: labelForNode(container), selLen: i + 1 });
+                    curr = container;
+                    continue;
+                }
+
+                // Otherwise, show container key label
+                breadcrumbs.push({ label: labelForContainerKey(parsed.key), selLen: i + 1 });
+                curr = container;
+                continue;
+            }
+
+            if (parsed.type === 'index') {
+                if (!Array.isArray(curr)) {
+                    breadcrumbs.push({ label: `[${parsed.index}]`, selLen: i + 1 });
+                    curr = undefined;
+                    continue;
+                }
+                const item = curr[parsed.index];
+                breadcrumbs.push({ label: isNodeObject(item) ? labelForNode(item) : `[${parsed.index}]`, selLen: i + 1 });
+                curr = item;
+                continue;
+            }
+
+            breadcrumbs.push({ label: String(seg), selLen: i + 1 });
+            curr = undefined;
+        }
+
+        // Remove consecutive duplicates
+        const deduped = [];
+        for (const b of breadcrumbs) {
+            if (deduped.length === 0 || deduped[deduped.length - 1].label !== b.label) deduped.push(b);
+        }
+        return deduped;
+    }
+
+    function selKey(key) {
+        return `k:${key}`;
+    }
+
+    function selIndex(index) {
+        return `i:${index}`;
+    }
+
+    function selPathStr(selPath) {
+        return JSON.stringify(selPath);
+    }
+
+    function getTreeElBySelPath(selPath) {
+        const s = selPathStr(selPath);
+        return document.querySelector(`[data-sel-path="${CSS.escape(s)}"]`);
+    }
+
+    async function ensureTreeSelPathVisible(selPath, options = {}) {
+        if (!Array.isArray(selPath) || selPath.length === 0) return;
+
+        for (let i = 1; i <= selPath.length; i++) {
+            const prefix = selPath.slice(0, i);
+            const el = getTreeElBySelPath(prefix);
+            if (!el) break;
+            if (el.classList.contains('collapsible-wrapper') && !el.classList.contains('expanded')) {
+                const header = el.querySelector('.collapsible-header');
+                if (header) header.click();
+                await new Promise(r => setTimeout(r, 0));
+            }
+        }
+
+        const target = getTreeElBySelPath(selPath);
+        if (target && options.scroll !== false) {
+            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            target.classList.add('highlight-node');
+            setTimeout(() => target.classList.remove('highlight-node'), 1200);
+        }
+    }
+
+    async function applyExpandedStateToTree() {
+        const paths = Array.from(state.expandedSelPaths)
+            .map(s => {
+                try { return JSON.parse(s); } catch { return null; }
+            })
+            .filter(p => Array.isArray(p) && p.length > 0)
+            .sort((a, b) => a.length - b.length);
+
+        for (const p of paths) {
+            await ensureTreeSelPathVisible(p, { scroll: false });
+        }
+    }
+
+    function setCurrentNode(selPath, displayPathIgnored, dataContext, options = {}) {
+        state.selectedSelPath = Array.isArray(selPath) ? selPath : [];
+        state.breadcrumbs = computeBreadcrumbsFromSelPath(currentData, state.selectedSelPath);
+        selectedNodePath = state.breadcrumbs.map(b => b.label);
+
+        renderSidebarNavigation();
+        if (dataContext !== undefined) {
+            const name = state.breadcrumbs[state.breadcrumbs.length - 1]?.label || 'Node';
+            updateDetails({
+                name,
+                type: 'object',
+                data: dataContext,
+            });
+        }
+
+        if (options.syncView !== false) {
+            if (currentView === 'tree') {
+                ensureTreeSelPathVisible(state.selectedSelPath);
+            } else {
+                ensureGraphSelPathVisible(state.selectedSelPath);
+            }
+        }
+    }
     
     // D3 Variables
     let svg, g, zoom, simulation;
@@ -50,6 +268,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const content = el.querySelector('.collapsible-content');
                 if (content) content.innerHTML = '';
             });
+            state.expandedSelPaths.clear();
         } else {
             // Collapse all in graph - reset to root
             if (nodes.length > 0) {
@@ -85,12 +304,8 @@ document.addEventListener('DOMContentLoaded', () => {
             // In tree view, we don't strictly have a "selected node" variable yet unless we track clicks.
             // Let's assume if selectedNodePath is set, we expand that. Otherwise global.
             
-            if (selectedNodePath && selectedNodePath.length > 0) {
-                // Find the element
-                const pathStr = JSON.stringify(selectedNodePath);
-                // Escape single quotes for selector
-                const safeSelector = pathStr.replace(/'/g, "\\'");
-                const target = document.querySelector(`[data-path='${safeSelector}']`);
+            if (state.selectedSelPath && state.selectedSelPath.length > 0) {
+                const target = getTreeElBySelPath(state.selectedSelPath);
                 if (target) {
                     // We need to expand this node and its children up to depth
                     // This is tricky with lazy loading. We might need to force render.
@@ -179,20 +394,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 isTreeInitialized = true;
             }
 
-            // Sync: Scroll to selected node
-            if (selectedNodePath) {
-                setTimeout(() => {
-                    const pathStr = JSON.stringify(selectedNodePath);
-                    const safeSelector = pathStr.replace(/'/g, "\\'");
-                    const target = document.querySelector(`[data-path='${safeSelector}']`);
-                    if (target) {
-                        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        // Highlight it?
-                        target.classList.add('highlight-node'); // We should add CSS for this
-                        setTimeout(() => target.classList.remove('highlight-node'), 2000);
-                    }
-                }, 100);
-            }
+            // Sync: restore expansions then scroll to selection
+            setTimeout(async () => {
+                await applyExpandedStateToTree();
+                if (state.selectedSelPath && state.selectedSelPath.length > 0) {
+                    await ensureTreeSelPathVisible(state.selectedSelPath);
+                }
+            }, 50);
 
         } else {
             dashboard.style.display = 'none';
@@ -204,10 +412,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 isGraphInitialized = true;
             }
 
-            // Sync: center on selected D3 node if any
-            if (selectedD3Node) {
+            // Sync: expand/center on selection
+            if (state.selectedSelPath) {
                 setTimeout(() => {
-                    centerNode(selectedD3Node);
+                    applyExpandedStateToGraph();
+                    ensureGraphSelPathVisible(state.selectedSelPath);
                 }, 50);
             }
         }
@@ -225,6 +434,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 targetExpandDepth = 0;
                 isTreeInitialized = false;
                 isGraphInitialized = false;
+                state.expandedSelPaths.clear();
+                    setCurrentNode([], null, currentData, { syncView: false });
 
                 if (currentView === 'tree') {
                     renderDashboard(currentData);
@@ -241,11 +452,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function loadDefaultFile() {
-        fetch('../logs/game_analysis.json')
-            .then(response => {
-                if (!response.ok) throw new Error('Network response was not ok');
-                return response.json();
-            })
+        const candidates = [
+            'logs/game_analysis.json',
+            '../logs/game_analysis.json',
+            'viewer/logs/game_analysis.json',
+            '/logs/game_analysis.json',
+            '/viewer/logs/game_analysis.json',
+        ];
+
+        fetchFirstJson(candidates)
             .then(data => {
                 // Backward-compatible: decode older compact logs (class-name payloads)
                 if (data && typeof data === 'object' && !data.t) {
@@ -289,6 +504,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 targetExpandDepth = 0;
                 isTreeInitialized = false;
                 isGraphInitialized = false;
+                state.expandedSelPaths.clear();
+                    setCurrentNode([], null, currentData, { syncView: false });
 
                 if (currentView === 'tree') {
                     renderDashboard(currentData);
@@ -301,6 +518,25 @@ document.addEventListener('DOMContentLoaded', () => {
             .catch(err => {
                 alert('Could not load default file. Please use the "Choose File" button.\nError: ' + err.message);
             });
+    }
+
+    function fetchFirstJson(urls) {
+        const list = Array.isArray(urls) ? urls : [];
+        if (list.length === 0) return Promise.reject(new Error('No URLs to fetch'));
+
+        const tried = [];
+        return (async () => {
+            for (const url of list) {
+                try {
+                    const r = await fetch(url, { cache: 'no-cache' });
+                    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+                    return await r.json();
+                } catch (err) {
+                    tried.push(`${url}: ${err?.message || String(err)}`);
+                }
+            }
+            throw new Error(`All default-file URLs failed. Tried: ${tried.join(' | ')}`);
+        })();
     }
 
     // --- D3 Graph Logic ---
@@ -338,12 +574,15 @@ document.addEventListener('DOMContentLoaded', () => {
         // Create Root Node
         const rootNode = {
             id: `node_${nodeIdCounter++}`,
-            name: "Game Root",
+            name: "Root",
             type: "root",
             data: data,
             expanded: false,
             x: width / 2,
-            y: height / 2
+            y: height / 2,
+            selSegment: null,
+            selPath: [],
+            displayPath: ['Root']
         };
 
         nodes.push(rootNode);
@@ -468,6 +707,15 @@ document.addEventListener('DOMContentLoaded', () => {
             const ix = node.x + radius * Math.cos(angle);
             const iy = node.y + radius * Math.sin(angle);
 
+            const isIndexKey = /^\[\d+\]$/.test(child.key);
+            const childIndex = isIndexKey ? Number(child.key.slice(1, -1)) : null;
+            const selSegment = isIndexKey ? selIndex(childIndex) : selKey(child.key);
+            const childSelPath = [...(node.selPath || []), selSegment];
+
+            const businessKey = (child.value && typeof child.value === 'object') ? getBusinessKey(child.value) : null;
+            const displaySegment = isIndexKey ? (businessKey || child.key) : child.key;
+            const childDisplayPath = [...(node.displayPath || ['Root']), displaySegment];
+
             const newNode = {
                 id: `node_${nodeIdCounter++}`,
                 name: child.key,
@@ -476,7 +724,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 expanded: false,
                 x: ix,
                 y: iy,
-                parent: node
+                parent: node,
+                selSegment,
+                selPath: childSelPath,
+                displayPath: childDisplayPath
             };
 
             nodes.push(newNode);
@@ -484,6 +735,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         node.expanded = true;
+        if (node.selPath) state.expandedSelPaths.add(selPathStr(node.selPath));
         updateViz();
     }
 
@@ -505,7 +757,49 @@ document.addEventListener('DOMContentLoaded', () => {
         links = links.filter(l => !idsToRemove.has(l.target.id) && !idsToRemove.has(l.source.id));
 
         node.expanded = false;
+        if (node.selPath) state.expandedSelPaths.delete(selPathStr(node.selPath));
         updateViz();
+    }
+
+    function ensureGraphSelPathVisible(selPath, options = {}) {
+        if (!currentData) return;
+
+        if (!isGraphInitialized) {
+            initGraph(currentData);
+            isGraphInitialized = true;
+        }
+
+        let curr = nodes.find(n => n.type === 'root');
+        if (!curr) return;
+
+        for (const seg of (Array.isArray(selPath) ? selPath : [])) {
+            if (!curr.expanded) expandNode(curr);
+            let next = nodes.find(n => n.parent === curr && n.selSegment === seg);
+            if (!next) {
+                // Try expanding once more in case children were not created yet
+                expandNode(curr);
+                next = nodes.find(n => n.parent === curr && n.selSegment === seg);
+            }
+            if (!next) break;
+            curr = next;
+        }
+
+        selectedD3Node = curr;
+        if (options.updateDetails !== false) updateDetails(curr);
+        if (options.center !== false) centerNode(curr);
+    }
+
+    function applyExpandedStateToGraph() {
+        const paths = Array.from(state.expandedSelPaths)
+            .map(s => {
+                try { return JSON.parse(s); } catch { return null; }
+            })
+            .filter(p => Array.isArray(p) && p.length > 0)
+            .sort((a, b) => a.length - b.length);
+
+        for (const p of paths) {
+            ensureGraphSelPathVisible(p, { center: false, updateDetails: false });
+        }
     }
 
     function updateDetails(node) {
@@ -518,7 +812,7 @@ document.addEventListener('DOMContentLoaded', () => {
         html += `<div class="detail-item"><span class="detail-label">Type</span><span class="detail-value">${node.type || 'object'}</span></div>`;
         
         // Add Center Button
-        html += `<button id="centerNodeBtn" class="sidebar-btn" style="margin-bottom: 1rem; background-color: #e3f2fd; color: #1565c0;">Center on Node</button>`;
+        html += `<button id="centerNodeBtn" class="sidebar-btn sidebar-center-btn">Center on Node</button>`;
 
         for (const [key, value] of Object.entries(props)) {
             html += `
@@ -548,16 +842,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 } else {
                     // Tree View: Scroll to element
-                    if (selectedNodePath) {
-                        const pathStr = JSON.stringify(selectedNodePath);
-                        const safeSelector = pathStr.replace(/'/g, "\\'");
-                        const target = document.querySelector(`[data-path='${safeSelector}']`);
-                        if (target) {
-                            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            target.classList.add('highlight-node');
-                            setTimeout(() => target.classList.remove('highlight-node'), 2000);
-                        }
-                    }
+                    ensureTreeSelPathVisible(state.selectedSelPath);
                 }
             };
         }
@@ -613,8 +898,8 @@ document.addEventListener('DOMContentLoaded', () => {
         nodeMerge.on("click", (event, d) => {
             event.stopPropagation();
             selectedD3Node = d; // Update global state
+            setCurrentNode(d.selPath || [], null, d.data, { syncView: false });
             updateDetails(d);
-            updateSidebarFromNode(d);
             centerNode(d);
             if (!d.expanded) expandNode(d);
         });
@@ -660,79 +945,35 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- End D3 Logic ---
 
     function updateSidebarFromNode(node) {
-        const path = [];
-        let curr = node;
-        while (curr) {
-            path.unshift(curr.name);
-            curr = curr.parent;
-        }
-        selectedNodePath = path; // Update global state
-        updateSidebar(path);
+        // Deprecated: graph clicks now call `setCurrentNode()`.
     }
 
     function updateSidebar(path) {
+        // Legacy signature: treat `path` as a *display path*.
+        state.selectedDisplayPath = Array.isArray(path) && path.length > 0 ? path : ['Root'];
+        renderSidebarNavigation();
+    }
+
+    function renderSidebarNavigation() {
         if (!sidebarNav) return;
         sidebarNav.innerHTML = '';
+        const breadcrumbs = state.breadcrumbs || [{ label: 'Root', selLen: 0 }];
 
-        // Title removed to avoid duplication
-
-        path.forEach((segment, index) => {
+        breadcrumbs.forEach((crumb, index) => {
             const btn = document.createElement('button');
             btn.className = 'sidebar-btn';
-            if (index === path.length - 1) btn.classList.add('active');
-            
-            // Format segment for display
-            let displayText = segment;
-            if (segment.startsWith('Round')) displayText = segment;
-            else if (segment.length > 20) displayText = segment.substring(0, 17) + '...';
-            
+            if (index === breadcrumbs.length - 1) btn.classList.add('active');
+
+            let displayText = crumb.label;
+            if (typeof displayText === 'string' && displayText.length > 20) displayText = displayText.substring(0, 17) + '...';
             btn.textContent = displayText;
-            btn.title = segment; // Tooltip for full name
-            
+            btn.title = crumb.label;
+
             btn.onclick = () => {
-                if (currentView === 'tree') {
-                    // Find element with this path
-                    // We need to be careful with the selector. 
-                    // JSON.stringify might produce strings that need escaping in CSS selectors.
-                    // Instead of querySelector, let's iterate or use a safer method if possible.
-                    // But querySelector is fastest. Let's try to escape single quotes.
-                    const targetPathStr = JSON.stringify(path.slice(0, index + 1));
-                    // Escape single quotes in the attribute value for the selector
-                    const safeSelector = targetPathStr.replace(/'/g, "\\'");
-                    const target = document.querySelector(`[data-path='${safeSelector}']`);
-                    
-                    if (target) {
-                        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                        // Also update selection state to this node
-                        selectedNodePath = path.slice(0, index + 1);
-                        // Re-render sidebar to show this as active? 
-                        // The click handler above already sets active class on button creation, 
-                        // but if we click a parent, we might want to update the sidebar to show *that* path?
-                        // Usually navigation jumps to the item. 
-                        // If I click "Root" in "Root > Child", do I want to see just "Root"?
-                        // Yes, probably.
-                        updateSidebar(selectedNodePath);
-                    }
-                } else {
-                    // Graph view navigation
-                    const targetPath = path.slice(0, index + 1);
-                    const targetNode = nodes.find(n => {
-                        if (n.name !== targetPath[targetPath.length - 1]) return false;
-                        // Check ancestry
-                        let curr = n;
-                        for (let i = targetPath.length - 1; i >= 0; i--) {
-                            if (!curr || curr.name !== targetPath[i]) return false;
-                            curr = curr.parent;
-                        }
-                        return true;
-                    });
-                    
-                    if (targetNode) {
-                        centerNode(targetNode);
-                        updateDetails(targetNode);
-                        updateSidebarFromNode(targetNode);
-                    }
-                }
+                const targetSel = state.selectedSelPath.slice(0, crumb.selLen);
+                const targetDisplay = breadcrumbs.slice(0, index + 1).map(c => c.label);
+                const dataAt = getDataAtSelPath(currentData, targetSel);
+                setCurrentNode(targetSel, targetDisplay, dataAt);
             };
 
             sidebarNav.appendChild(btn);
@@ -743,20 +984,20 @@ document.addEventListener('DOMContentLoaded', () => {
         dashboard.innerHTML = '';
         
         // The root is an object
-        const rootPath = ['Root'];
-        const rootEl = renderObject(data, 'Game Analysis Root', true, 0, rootPath);
+        const rootDisplayPath = ['Root'];
+        const rootSelPath = [];
+        const rootEl = renderObject(data, 'Game Analysis Root', true, 0, rootDisplayPath, rootSelPath);
         dashboard.appendChild(rootEl);
-        
-        updateSidebar(rootPath);
+
+        setCurrentNode(rootSelPath, null, data, { syncView: false });
     }
 
-    function createLazyCollapsible(headerText, renderContentFn, autoExpand = false, path = [], dataContext = null) {
+    function createLazyCollapsible(headerText, renderContentFn, autoExpand = false, displayPath = [], selPath = [], dataContext = null) {
         const wrapper = document.createElement('div');
         wrapper.className = 'collapsible-wrapper';
-        if (path.length > 0) {
-            wrapper.setAttribute('data-path', JSON.stringify(path));
-            // observer.observe(wrapper); // Removed observer
-        }
+        wrapper.setAttribute('data-path', JSON.stringify(displayPath));
+        wrapper.setAttribute('data-sel-path', selPathStr(selPath));
+        // observer.observe(wrapper); // Removed observer
         
         const header = document.createElement('div');
         header.className = 'collapsible-header';
@@ -771,21 +1012,17 @@ document.addEventListener('DOMContentLoaded', () => {
             if (e) e.stopPropagation();
             
             // Update selection
-            if (path.length > 0) {
-                selectedNodePath = path;
-                updateSidebar(path);
-                
-                if (dataContext) {
-                    updateDetails({
-                        name: headerText,
-                        type: 'object',
-                        data: dataContext
-                    });
-                }
-            }
+            setCurrentNode(selPath, displayPath, dataContext, { syncView: false });
 
             const isExpanding = !wrapper.classList.contains('expanded');
             wrapper.classList.toggle('expanded');
+
+            const sp = selPathStr(selPath);
+            if (isExpanding) {
+                state.expandedSelPaths.add(sp);
+            } else {
+                state.expandedSelPaths.delete(sp);
+            }
 
             if (isExpanding) {
                 if (!isRendered || content.innerHTML === '') {
@@ -810,8 +1047,9 @@ document.addEventListener('DOMContentLoaded', () => {
         wrapper.appendChild(header);
         wrapper.appendChild(content);
 
-        if (autoExpand) {
+        if (autoExpand || state.expandedSelPaths.has(selPathStr(selPath))) {
             wrapper.classList.add('expanded');
+            state.expandedSelPaths.add(selPathStr(selPath));
             const contentEl = renderContentFn();
             if (contentEl) {
                 content.appendChild(contentEl);
@@ -828,6 +1066,31 @@ document.addEventListener('DOMContentLoaded', () => {
         if (obj.drawKey || obj.drawCombination) return `Draw: ${obj.drawKey ?? obj.drawCombination}`;
         if (obj.combination) return `Comb: ${obj.combination}`;
         return null;
+    }
+
+    function parseSelSegment(seg) {
+        const s = String(seg);
+        if (s.startsWith('k:')) return { type: 'key', key: s.slice(2) };
+        if (s.startsWith('i:')) return { type: 'index', index: Number(s.slice(2)) };
+        return { type: 'unknown', raw: s };
+    }
+
+    function getDataAtSelPath(root, selPath) {
+        let curr = root;
+        if (!Array.isArray(selPath)) return curr;
+        for (const seg of selPath) {
+            const p = parseSelSegment(seg);
+            if (p.type === 'key') {
+                if (!curr || typeof curr !== 'object') return undefined;
+                curr = curr[p.key];
+            } else if (p.type === 'index') {
+                if (!Array.isArray(curr)) return undefined;
+                curr = curr[p.index];
+            } else {
+                return undefined;
+            }
+        }
+        return curr;
     }
 
     function formatAction(action) {
@@ -851,7 +1114,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return actions.map(formatAction);
     }
 
-    function renderValue(key, value, depth, path) {
+    function renderValue(key, value, depth, displayPath, selPath) {
         if (value === null || value === undefined) {
             const span = document.createElement('span');
             span.className = 'field-value';
@@ -867,8 +1130,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (Array.isArray(value) && String(key).toLowerCase() === 'placementpermutations') {
-            const newPath = [...path, key];
-            return renderTable(value, depth + 1, newPath);
+            const newDisplayPath = [...displayPath, key];
+            const newSelPath = [...selPath, selKey(key)];
+            return renderTable(value, depth + 1, newDisplayPath, newSelPath);
         }
 
         if (Array.isArray(value)) {
@@ -879,12 +1143,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 return span;
             }
             
-            const newPath = [...path, key];
+            const newDisplayPath = [...displayPath, key];
+            const newSelPath = [...selPath, selKey(key)];
             return createLazyCollapsible(
                 `${key} [${value.length}]`, 
-                () => renderTable(value, depth + 1, newPath), 
+                () => renderTable(value, depth + 1, newDisplayPath, newSelPath), 
                 depth < targetExpandDepth,
-                newPath,
+                newDisplayPath,
+                newSelPath,
                 value
             );
         }
@@ -892,13 +1158,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (typeof value === 'object') {
             const businessKey = getBusinessKey(value);
             const header = businessKey ? `${key} - ${businessKey}` : key;
-            const newPath = [...path, businessKey || key];
+            const newDisplayPath = [...displayPath, businessKey || key];
+            const newSelPath = [...selPath, selKey(key)];
             
             return createLazyCollapsible(
                 header,
-                () => renderObject(value, null, false, depth + 1, newPath),
+                () => renderObject(value, null, false, depth + 1, newDisplayPath, newSelPath),
                 depth < targetExpandDepth,
-                newPath,
+                newDisplayPath,
+                newSelPath,
                 value
             );
         }
@@ -914,7 +1182,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return span;
     }
 
-    function renderObject(obj, title = null, expanded = false, depth = 0, path = []) {
+    function renderObject(obj, title = null, expanded = false, depth = 0, displayPath = [], selPath = []) {
         const card = document.createElement('div');
         card.className = 'card';
 
@@ -927,17 +1195,17 @@ document.addEventListener('DOMContentLoaded', () => {
         if (canOffenseWin === false) card.classList.add('cofw-false');
 
         const isActionNode = obj && typeof obj === 'object' && obj.t === 'ActionNode';
-        if (path.length > 0) {
-            card.setAttribute('data-path', JSON.stringify(path));
+        card.setAttribute('data-path', JSON.stringify(displayPath));
+        card.setAttribute('data-sel-path', selPathStr(selPath));
+        if (displayPath.length > 0) {
             // observer.observe(card); // Removed observer
             
             // Add click handler for selection
             card.addEventListener('click', (e) => {
                 e.stopPropagation();
-                selectedNodePath = path;
-                updateSidebar(path);
+                setCurrentNode(selPath, displayPath, obj, { syncView: false });
                 updateDetails({
-                    name: title || path[path.length - 1] || 'Object',
+                    name: title || displayPath[displayPath.length - 1] || 'Object',
                     type: 'object',
                     data: obj
                 });
@@ -1002,7 +1270,12 @@ document.addEventListener('DOMContentLoaded', () => {
             card.appendChild(table);
             // Special: for DefenseNode, render potentialDraws as a plain table (no wrapper)
             if (obj.t === 'DefenseNode' && Array.isArray(obj.potentialDraws) && obj.potentialDraws.length > 0) {
-                const drawsTable = renderTable(obj.potentialDraws, depth + 1, [...path, 'potentialDraws']);
+                const drawsTable = renderTable(
+                    obj.potentialDraws,
+                    depth + 1,
+                    [...displayPath, 'potentialDraws'],
+                    [...selPath, selKey('potentialDraws')]
+                );
                 card.appendChild(drawsTable);
             }
             // Render other complex fields (arrays/objects) below as before, except potentialDraws
@@ -1010,7 +1283,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (key === 'potentialDraws') continue;
                 if (keysShownInTable.has(key)) continue;
                 if (typeof value === 'object' && value !== null) {
-                    const valEl = renderValue(key, value, depth, path);
+                    const valEl = renderValue(key, value, depth, displayPath, selPath);
                     card.appendChild(valEl);
                 }
             }
@@ -1034,24 +1307,24 @@ document.addEventListener('DOMContentLoaded', () => {
             label.textContent = key;
             let valEl;
             if (isActionNode && key === 'actions' && Array.isArray(obj[key]) && obj[key].length > 0) {
-                valEl = renderTable(formatActions(obj[key]), depth + 1, [...path, key]);
+                valEl = renderTable(formatActions(obj[key]), depth + 1, [...displayPath, key], [...selPath, selKey(key)]);
             } else if (isActionNode && key === 'units' && Array.isArray(obj[key]) && obj[key].length > 0) {
-                valEl = renderTable(obj[key], depth + 1, [...path, key]);
+                valEl = renderTable(obj[key], depth + 1, [...displayPath, key], [...selPath, selKey(key)]);
             } else {
-                valEl = renderValue(key, obj[key], depth, path);
+                valEl = renderValue(key, obj[key], depth, displayPath, selPath);
             }
             row.appendChild(label);
             row.appendChild(valEl);
             card.appendChild(row);
         });
         complex.forEach(key => {
-            const valEl = renderValue(key, obj[key], depth, path);
+            const valEl = renderValue(key, obj[key], depth, displayPath, selPath);
             card.appendChild(valEl);
         });
         return card;
     }
 
-    function renderTable(arr, depth, path) {
+    function renderTable(arr, depth, displayPath, selPath) {
         if (!arr.length) return document.createTextNode('Empty Array');
 
         // Do not flatten `nextRound` into the parent row.
@@ -1108,7 +1381,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         if (complexCols.length > 0) {
             const th = document.createElement('th');
-            th.style.width = '30px';
+            th.className = 'expander-col';
             headerRow.appendChild(th);
         }
 
@@ -1123,18 +1396,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const tbody = document.createElement('tbody');
         processedArr.forEach((item, index) => {
             const tr = document.createElement('tr');
-            const itemPath = [...path, `[${index}]`];
+            const itemSelPath = [...selPath, selIndex(index)];
+            const businessKey = (item && typeof item === 'object') ? getBusinessKey(item) : null;
+            const itemDisplayPath = [...displayPath, businessKey || `[${index}]`];
             
             if (complexCols.length > 0) {
                 const td = document.createElement('td');
                 const btn = document.createElement('button');
                 btn.textContent = '▶';
                 btn.className = 'row-expand-btn';
-                btn.style.cursor = 'pointer';
-                btn.style.border = 'none';
-                btn.style.background = 'none';
-                btn.style.color = '#2980b9';
-                btn.style.fontWeight = 'bold';
                 td.appendChild(btn);
                 tr.appendChild(td);
             }
@@ -1150,14 +1420,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     if (item.t === 'ActionNode' && col === 'actions' && Array.isArray(val) && val.length > 0) {
                         // Render ActionNode actions as compact strings
-                        td.appendChild(renderTable(formatActions(val), depth + 1, [...itemPath, col]));
+                        td.appendChild(renderTable(formatActions(val), depth + 1, [...itemDisplayPath, col], [...itemSelPath, selKey(col)]));
                         tr.appendChild(td);
                         return;
                     }
 
                     if (item.t === 'ActionNode' && col === 'units' && Array.isArray(val) && val.length > 0) {
                         // Inline tables for ActionNode units inside parent tables
-                        td.appendChild(renderTable(val, depth + 1, [...itemPath, col]));
+                        td.appendChild(renderTable(val, depth + 1, [...itemDisplayPath, col], [...itemSelPath, selKey(col)]));
                         tr.appendChild(td);
                         return;
                     }
@@ -1170,7 +1440,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             td.appendChild(badge);
                         });
                     } else {
-                        td.appendChild(renderValue(col, val, depth, itemPath));
+                        td.appendChild(renderValue(col, val, depth, itemDisplayPath, itemSelPath));
                     }
                     
                     tr.appendChild(td);
@@ -1196,7 +1466,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         wrapper.className = 'detail-field-wrapper';
                         
                         // Remove detail-field-label: just show value
-                        wrapper.appendChild(renderValue(col, val, depth + 1, [...itemPath, col]));
+                        wrapper.appendChild(renderValue(col, val, depth + 1, [...itemDisplayPath, col], [...itemSelPath, selKey(col)]));
                         detailContent.appendChild(wrapper);
                     }
                 });
@@ -1215,8 +1485,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 btn.onclick = (e) => {
                     e.stopPropagation();
-                    selectedNodePath = itemPath;
-                    updateSidebar(itemPath);
+                    setCurrentNode(itemSelPath, null, item, { syncView: false });
                     
                     // Update details for table row item
                     updateDetails({
@@ -1245,5 +1514,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const content = el.querySelector('.collapsible-content');
             if (content) content.innerHTML = '';
         });
+        state.expandedSelPaths.clear();
     };
 });
