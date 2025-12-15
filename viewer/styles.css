@@ -25,17 +25,25 @@
 .node-detail-table tr:last-child td {
     border-bottom: none;
 }
-.sidebar-collapsed {
-    width: 36px !important;
-    min-width: 36px !important;
-    padding: 0 !important;
-    overflow: hidden !important;
+.sidebar-shell.sidebar-collapsed {
+    width: 14px;
+    min-width: 14px;
+    background-color: #fff;
+    border-right: 1px solid #e0e0e0;
     transition: width 0.2s;
+}
+
+.sidebar-shell.sidebar-collapsed .sidebar {
+    width: 0 !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+    border-right: 0 !important;
+    overflow: hidden !important;
 }
 .sidebar-toggle-btn {
     position: absolute;
     top: 8px;
-    right: -16px;
+    left: 100%;
     width: 32px;
     height: 32px;
     background: #e0e0e0;
@@ -120,16 +128,22 @@ body {
     min-height: calc(100vh - 80px); /* Adjust based on header height */
 }
 
+.sidebar-shell {
+    position: sticky;
+    top: 80px; /* Below header */
+    height: calc(100vh - 80px);
+    flex-shrink: 0;
+    display: flex;
+    z-index: 1;
+}
+
 .sidebar {
     width: 300px;
     background-color: #fff;
     border-right: 1px solid #e0e0e0;
     padding: 1rem;
-    position: sticky;
-    top: 80px; /* Below header */
-    height: calc(100vh - 80px);
+    height: 100%;
     overflow-y: auto;
-    flex-shrink: 0;
     display: flex;
     flex-direction: column;
     gap: 1rem;

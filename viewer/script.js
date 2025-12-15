@@ -1,10 +1,11 @@
 document.addEventListener('DOMContentLoaded', () => {
         const sidebar = document.getElementById('sidebar');
+        const sidebarShell = sidebar?.closest('.sidebar-shell');
         const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
 
-        if (sidebarToggleBtn && sidebar) {
+        if (sidebarToggleBtn && sidebarShell) {
             sidebarToggleBtn.addEventListener('click', () => {
-                const collapsed = sidebar.classList.toggle('sidebar-collapsed');
+                const collapsed = sidebarShell.classList.toggle('sidebar-collapsed');
                 sidebarToggleBtn.textContent = collapsed ? '❯' : '❮';
             });
         }
@@ -865,6 +866,11 @@ document.addEventListener('DOMContentLoaded', () => {
             return span;
         }
 
+        if (Array.isArray(value) && String(key).toLowerCase() === 'placementpermutations') {
+            const newPath = [...path, key];
+            return renderTable(value, depth + 1, newPath);
+        }
+
         if (Array.isArray(value)) {
             if (value.length === 0) {
                 const span = document.createElement('span');
@@ -967,15 +973,26 @@ document.addEventListener('DOMContentLoaded', () => {
             const trHead = document.createElement('tr');
             const tbody = document.createElement('tbody');
             const trBody = document.createElement('tr');
-            // Only show primitive fields (not arrays/objects)
+            const keysShownInTable = new Set();
+            // Only show primitive + simple-array fields (not complex arrays/objects)
             for (const [key, value] of Object.entries(obj)) {
-                if (typeof value !== 'object' || value === null) {
+                const isSimpleNumberArray = Array.isArray(value) && value.every(v => typeof v === 'number');
+                const isSimpleStringArray = Array.isArray(value) && value.every(v => typeof v === 'string');
+
+                if (typeof value !== 'object' || value === null || isSimpleNumberArray || isSimpleStringArray) {
                     const th = document.createElement('th');
                     th.textContent = key;
                     trHead.appendChild(th);
                     const td = document.createElement('td');
-                    td.textContent = value;
+
+                    if (isSimpleNumberArray || isSimpleStringArray) {
+                        td.textContent = value.join(',');
+                    } else {
+                        td.textContent = value;
+                    }
+
                     trBody.appendChild(td);
+                    keysShownInTable.add(key);
                 }
             }
             thead.appendChild(trHead);
@@ -991,6 +1008,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Render other complex fields (arrays/objects) below as before, except potentialDraws
             for (const [key, value] of Object.entries(obj)) {
                 if (key === 'potentialDraws') continue;
+                if (keysShownInTable.has(key)) continue;
                 if (typeof value === 'object' && value !== null) {
                     const valEl = renderValue(key, value, depth, path);
                     card.appendChild(valEl);

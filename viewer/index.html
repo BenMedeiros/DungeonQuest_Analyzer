@@ -28,16 +28,18 @@
     </div>
 
     <div class="main-container">
-        <div id="sidebar" class="sidebar">
+        <div class="sidebar-shell">
+            <div id="sidebar" class="sidebar">
+                <div class="sidebar-section">
+                    <div class="sidebar-title">Navigation</div>
+                    <div id="sidebar-nav"></div>
+                </div>
+                <div class="sidebar-section">
+                    <div class="sidebar-title">Node Details</div>
+                    <div id="sidebar-details">Select a node to view details</div>
+                </div>
+            </div>
             <button id="sidebarToggleBtn" class="sidebar-toggle-btn" title="Collapse/Expand Sidebar">❮</button>
-            <div class="sidebar-section">
-                <div class="sidebar-title">Navigation</div>
-                <div id="sidebar-nav"></div>
-            </div>
-            <div class="sidebar-section">
-                <div class="sidebar-title">Node Details</div>
-                <div id="sidebar-details">Select a node to view details</div>
-            </div>
         </div>
         <div id="dashboard" class="dashboard">
             <div class="placeholder-text">Please load a game_analysis.json file to begin.</div>
