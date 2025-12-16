@@ -102,6 +102,23 @@ document.addEventListener('DOMContentLoaded', () => {
         return key === 'potentialDraws' || key === 'placementPermutations' || key === 'turnActions';
     }
 
+    function canonicalizeChildKey(currObj, key) {
+        // Defensive: some UI paths may accidentally use display labels instead of raw property keys.
+        // Prefer the key that actually exists on the current object.
+        if (!currObj || typeof currObj !== 'object') return key;
+        if (Object.prototype.hasOwnProperty.call(currObj, key)) return key;
+
+        const aliases = {
+            Draws: 'potentialDraws',
+            Placements: 'placementPermutations',
+            Actions: 'turnActions',
+        };
+
+        const alt = aliases[key];
+        if (alt && Object.prototype.hasOwnProperty.call(currObj, alt)) return alt;
+        return key;
+    }
+
     function computeBreadcrumbsFromSelPath(root, selPath) {
         const breadcrumbs = [{ label: 'Root', selLen: 0 }];
         let curr = root;
@@ -114,12 +131,13 @@ document.addEventListener('DOMContentLoaded', () => {
             if (parsed.type === 'key') {
                 const nextSeg = segments[i + 1];
                 const nextParsed = nextSeg ? parseSelSegment(nextSeg) : null;
-                const container = (curr && typeof curr === 'object') ? curr[parsed.key] : undefined;
+                const effectiveKey = canonicalizeChildKey(curr, parsed.key);
+                const container = (curr && typeof curr === 'object') ? curr[effectiveKey] : undefined;
 
                 // If this key points to an array and next is an index, collapse key+index into one node label
                 if (Array.isArray(container) && nextParsed && nextParsed.type === 'index') {
                     const item = container[nextParsed.index];
-                    if ((item && typeof item === 'object') && (isNodeObject(item) || shouldCollapseCollectionKey(parsed.key))) {
+                    if ((item && typeof item === 'object') && (isNodeObject(item) || shouldCollapseCollectionKey(effectiveKey))) {
                         breadcrumbs.push({ label: labelForNode(item), selLen: i + 2 });
                         curr = item;
                         i++; // consume index segment
@@ -127,7 +145,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
 
                     // Non-node items: show container label then index label
-                    breadcrumbs.push({ label: labelForContainerKey(parsed.key), selLen: i + 1 });
+                    breadcrumbs.push({ label: labelForContainerKey(effectiveKey), selLen: i + 1 });
                     breadcrumbs.push({ label: `[${nextParsed.index}]`, selLen: i + 2 });
                     curr = item;
                     i++;
@@ -136,14 +154,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 // If key points directly to a node object, show node label (not raw key)
                 // Also treat `nextRound` as a node step even if the heuristics miss it.
-                if ((container && typeof container === 'object') && (isNodeObject(container) || parsed.key === 'nextRound')) {
+                if ((container && typeof container === 'object') && (isNodeObject(container) || effectiveKey === 'nextRound')) {
                     breadcrumbs.push({ label: labelForNode(container), selLen: i + 1 });
                     curr = container;
                     continue;
                 }
 
                 // Otherwise, show container key label
-                breadcrumbs.push({ label: labelForContainerKey(parsed.key), selLen: i + 1 });
+                breadcrumbs.push({ label: labelForContainerKey(effectiveKey), selLen: i + 1 });
                 curr = container;
                 continue;
             }
